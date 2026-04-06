@@ -66,7 +66,6 @@ public class Arguments
         // Output
         public string OutDir { get; set; } = ".";
 
-        // Profile (optional — loads defaults from ~/.aspimport/profiles/<name>.xml)
         public string? Profile { get; set; }
 
         // Entry DLL override (optional — auto-detected from publish dir if omitted)

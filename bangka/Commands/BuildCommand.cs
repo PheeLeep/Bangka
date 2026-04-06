@@ -54,13 +54,12 @@ public static class BuildCommand
             AnsiConsole.MarkupLine("[red]Validation failed:[/]");
             foreach (var e in errors)
                 AnsiConsole.MarkupLine($"  [red]•[/] {e}");
-            PrintUsage();
             return 1;
         }
 
         AnsiConsole.MarkupLine($"[bold cyan]Building package[/] [white]{opts.Name}[/] v[white]{opts.Version}[/]\n");
 
-        var stagingDir = Path.Combine(Path.GetTempPath(), $"aspimport-build-{Guid.NewGuid():N}");
+        var stagingDir = Path.Combine(Path.GetTempPath(), $"bangka-build-{Guid.NewGuid():N}");
         Directory.CreateDirectory(stagingDir);
 
         try
@@ -275,11 +274,6 @@ public static class BuildCommand
         }
     }
 
-    internal static void RunAsync(ArgInvoke argInvoke)
-    {
-        throw new NotImplementedException();
-    }
-
     private static Task CopyDirectoryAsync(string src, string dst, ProgressTask task)
     {
         var files = Directory.GetFiles(src, "*", SearchOption.AllDirectories);
@@ -295,41 +289,5 @@ public static class BuildCommand
         }
 
         return Task.CompletedTask;
-    }
-
-    static void PrintUsage()
-    {
-        AnsiConsole.MarkupLine("\n[bold]Usage:[/] aspimport-master build [[options]]\n");
-
-        var table = new Table()
-            .Border(TableBorder.Rounded)
-            .BorderColor(Color.Grey)
-            .AddColumn("[cyan]Flag[/]")
-            .AddColumn("[grey]Required[/]")
-            .AddColumn("[grey]Description[/]");
-
-        table.AddRow("--name", "[red]yes[/]", "Application / service name");
-        table.AddRow("--version", "[red]yes[/]", "Semantic version (e.g. 1.0.0)");
-        table.AddRow("--publish", "[red]yes[/]", "Path to dotnet publish output directory");
-        table.AddRow("--port", "no", "ASP.NET port (default: 5000)");
-        table.AddRow("--user", "no", "Linux service user (default: www-data)");
-        table.AddRow("--env", "no", "ASPNETCORE_ENVIRONMENT (default: Production)");
-        table.AddRow("--author", "no", "Package author");
-        table.AddRow("--description", "no", "Human-readable description");
-        table.AddRow("--out", "no", "Output directory (default: .)");
-        table.AddRow("--cf-tunnel-id", "no*", "Cloudflare tunnel UUID");
-        table.AddRow("--cf-tunnel-name", "no*", "Cloudflare tunnel name");
-        table.AddRow("--cf-hostname", "no*", "Public hostname (e.g. api.example.com)");
-        table.AddRow("--dll", "no", "Entry DLL name (e.g. MyApp.Server.dll) — auto-detected if omitted");
-        table.AddRow("--env-file", "no", "Path to EnvironmentFile on the remote (e.g. /etc/myapp.env)");
-        table.AddRow("--sign", "no", "Sign the package with ~/.aspimport/signing.key");
-        table.AddRow("--signing-key", "no", "Path to signing private key (overrides default)");
-        table.AddRow("--cf-tunnel-id", "no*", "Cloudflare tunnel UUID");
-        table.AddRow("--cf-tunnel-name", "no*", "Cloudflare tunnel name");
-        table.AddRow("--cf-hostname", "no*", "Public hostname (e.g. api.example.com)");
-        table.AddRow("--cf-credentials", "no*", "Path to tunnel credentials JSON");
-
-        AnsiConsole.Write(table);
-        AnsiConsole.MarkupLine("[grey]* All --cf-* flags must be provided together or not at all.[/]");
     }
 }

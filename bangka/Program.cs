@@ -19,6 +19,7 @@ public class Program
         ArgInvoke? keygenInvoke = null;
         ArgInvoke? verifyInvoke = null;
         ArgInvoke? buildInvoke = null;
+        ArgInvoke? deployInvoke = null;
         profileInvoke = ArgSharpClass.AddArgumentAction(["profile"],
                                                          null,
                                                          "Manage deployment profiles (create, list, show, delete)");
@@ -38,9 +39,10 @@ public class Program
         verifyInvoke.ArgumentZeroAction = ArgSharpClass.ArgZeroAction.TreatAsSuccess;
         verifyInvoke.AddArgument<string>(["--pub-key"], helpMsg: "Path to public key PEM file (optional, defaults to local trust store)", isRequired: false);
         verifyInvoke.AddArgument<string>(["--package"], helpMsg: "Package Path", isRequired: true);
-        
+
         buildInvoke = ArgSharpClass.AddArgumentAction(["build"],
-                                                        () => {
+                                                        () =>
+                                                        {
                                                             try
                                                             {
                                                                 BuildCommand.Run(buildInvoke!);
@@ -53,9 +55,27 @@ public class Program
                                                             }
                                                         },
                                                         "Build a .bangka package from a directory");
-                                
+
         BuildCommand.Load(buildInvoke!);
-        
+
+        deployInvoke = ArgSharpClass.AddArgumentAction(["deploy"],
+                                                       () =>
+                                                       {
+                                                           try
+                                                           {
+                                                               DeployCommand.Run(deployInvoke!);
+                                                               Environment.Exit(0);
+                                                           }
+                                                           catch (Exception ex)
+                                                           {
+                                                               AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(ex.Message)}");
+                                                               Environment.Exit(1);
+                                                           }
+                                                       },
+                                                       "Deploy a .bangka package to a remote host");
+
+        DeployCommand.Load(deployInvoke!);
+
         if (!ArgSharpClass.Parse(args))
         {
             return;
