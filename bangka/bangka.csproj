@@ -5,7 +5,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <Version>0.0.1</Version>
+    <version>0.0.1</version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,12 +15,7 @@
 
   <ItemGroup>
     <Folder Include="Commands/" />
-    <Folder Include="Objects/" />
-    <Folder Include="Objects/DTO/" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <ProjectReference Include="../bangka-lib/bangka-lib.csproj" />
+    <Folder Include="Properties/" />
   </ItemGroup>
 
 </Project>
