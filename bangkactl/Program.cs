@@ -13,8 +13,10 @@ public class Program
 
         ArgInvoke? logInvoke = null;
 
-        logInvoke = ArgSharpClass.AddArgumentAction(["logs"], () => { LogsCommand.Run(logInvoke!);}, "Tail the systemd journal for a service");
+        logInvoke = ArgSharpClass.AddArgumentAction(["logs"], () => { LogsCommand.Run(logInvoke!); }, "Tail the systemd journal for a service");
         TrustCommand.Load(ArgSharpClass.AddArgumentAction(["trust"], null, "Manage trust signing enforcement."));
+        ArgSharpClass.AddArgumentAction(["list"], () => { Environment.Exit(ListCommand.Load());}, "List all services managed by Bangka").ArgumentZeroAction = ArgSharpClass.ArgZeroAction.TreatAsSuccess;
+
         LogsCommand.Load(logInvoke);
         DeployUserCommand.Load(ArgSharpClass.AddArgumentAction(["deploy-user"],
                                                                 null,
