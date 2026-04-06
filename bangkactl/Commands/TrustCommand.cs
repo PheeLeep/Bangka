@@ -170,7 +170,7 @@ internal class TrustCommand
 
         if (pathArg is null)
         {
-            AnsiConsole.MarkupLine("[red]Usage:[/] bangkactl trust verify <package.bangka>");
+            AnsiConsole.MarkupLine("[red]Usage:[/] bangkactl trust verify --path <package.bangka>");
             return 1;
         }
 

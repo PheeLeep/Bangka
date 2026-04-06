@@ -17,6 +17,8 @@ public class Program
 
         ArgInvoke? profileInvoke = null;
         ArgInvoke? keygenInvoke = null;
+        ArgInvoke? verifyInvoke = null;
+        ArgInvoke? buildInvoke = null;
         profileInvoke = ArgSharpClass.AddArgumentAction(["profile"],
                                                          null,
                                                          "Manage deployment profiles (create, list, show, delete)");
@@ -29,14 +31,31 @@ public class Program
         keygenInvoke.ArgumentZeroAction = ArgSharpClass.ArgZeroAction.TreatAsSuccess;
         keygenInvoke.AddArgument<bool>(["--force", "-f"], helpMsg: "Overwrite existing keys if they exist");
 
-        ArgInvoke? verifyInvoke = null;
         verifyInvoke = ArgSharpClass.AddArgumentAction(["verify"],
                                                         () => Environment.Exit(RunVerify(verifyInvoke!)),
-                                                        "Verify the signature of a .aspkg file");
+                                                        "Verify the signature of a .bangka file");
 
         verifyInvoke.ArgumentZeroAction = ArgSharpClass.ArgZeroAction.TreatAsSuccess;
         verifyInvoke.AddArgument<string>(["--pub-key"], helpMsg: "Path to public key PEM file (optional, defaults to local trust store)", isRequired: false);
         verifyInvoke.AddArgument<string>(["--package"], helpMsg: "Package Path", isRequired: true);
+        
+        buildInvoke = ArgSharpClass.AddArgumentAction(["build"],
+                                                        () => {
+                                                            try
+                                                            {
+                                                                BuildCommand.Run(buildInvoke!);
+                                                                Environment.Exit(0);
+                                                            }
+                                                            catch (Exception ex)
+                                                            {
+                                                                AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(ex.Message)}");
+                                                                Environment.Exit(1);
+                                                            }
+                                                        },
+                                                        "Build a .bangka package from a directory");
+                                
+        BuildCommand.Load(buildInvoke!);
+        
         if (!ArgSharpClass.Parse(args))
         {
             return;

@@ -42,7 +42,7 @@ public static class PackageSigner
     // ── Sign ──────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Signs the .aspkg file and writes a detached .aspkg.sig next to it.
+    /// Signs the .bangka file and writes a detached .bangka.sig next to it.
     /// The sig file is JSON: { "alg": "ES256", "keyId": "...", "signature": "base64" }
     /// </summary>
     public static void SignPackage(string packagePath, string? privateKeyPath = null)
@@ -82,7 +82,7 @@ public static class PackageSigner
     // ── Verify ────────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Verifies the .aspkg.sig against the package.
+    /// Verifies the .bangka.sig against the package.
     /// Returns (success, message).
     /// </summary>
     public static (bool Ok, string Message) VerifyPackage(
