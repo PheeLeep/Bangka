@@ -5,6 +5,22 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Version>0.1.0</Version>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="PheeLeep.ArgSharp" Version="2.3.1" />
+    <PackageReference Include="Spectre.Console" Version="0.55.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Commands/" />
+    <Folder Include="Objects/" />
+    <Folder Include="Objects/DTO/" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../bangka-lib/bangka-lib.csproj" />
+  </ItemGroup>
 
 </Project>
