@@ -8,9 +8,9 @@ public static class LogsCommand
 {
     internal static void Load(ArgInvoke argInvoke)
     {
-        argInvoke.AddArgument(["--lines", "-n"], defaultValue: 50);
-        argInvoke.AddArgument(["--follow", "-f"], defaultValue: false);
-        argInvoke.AddArgument(["--service-name"], defaultValue: "", isRequired: true);
+        argInvoke.AddArgument(["--lines", "-n"], defaultValue: 50, helpMsg: "Number of lines to show from logs.");
+        argInvoke.AddArgument(["--follow", "-f"], defaultValue: false, helpMsg: "Show real time logs of the service.");
+        argInvoke.AddArgument(["--service-name"], defaultValue: "", isRequired: true, helpMsg: "Service name");
     }
 
     internal static void Run(ArgInvoke argInvoke)
