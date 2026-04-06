@@ -2,7 +2,7 @@ using System;
 using System.Security.Cryptography;
 using System.Text.Json;
 using bangka_lib;
-using bangkactl.Objects.DTO;
+using bangka_lib.Objects;
 
 namespace bangkactl.Objects;
 

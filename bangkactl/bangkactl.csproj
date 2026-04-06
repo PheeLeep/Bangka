@@ -16,7 +16,6 @@
   <ItemGroup>
     <Folder Include="Commands/" />
     <Folder Include="Objects/" />
-    <Folder Include="Objects/DTO/" />
   </ItemGroup>
 
   <ItemGroup>

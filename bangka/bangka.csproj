@@ -15,7 +15,12 @@
 
   <ItemGroup>
     <Folder Include="Commands/" />
+    <Folder Include="Objects/" />
     <Folder Include="Properties/" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../bangka-lib/bangka-lib.csproj" />
   </ItemGroup>
 
 </Project>
