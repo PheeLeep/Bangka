@@ -68,7 +68,7 @@ public class Program
                                                            }
                                                            catch (Exception ex)
                                                            {
-                                                               AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(ex.Message)}");
+                                                               AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(ex.Message)}\n{Markup.Escape(ex.StackTrace!)}");
                                                                Environment.Exit(1);
                                                            }
                                                        },

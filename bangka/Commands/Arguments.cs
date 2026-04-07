@@ -7,13 +7,13 @@ public class Arguments
 {
     public static void LoadBuildArgs(ArgInvoke arg)
     {
-        arg.AddArgument<string>(["--profile-name"], helpMsg: "The name of the profile to load (optional)");
-        arg.AddArgument<string>(["--name"],helpMsg:  "The name of the build");
+        arg.AddArgument<string>(["--name"], helpMsg: "The name of the build");
         arg.AddArgument<string>(["--version"], helpMsg: "The version of the build");
-        arg.AddArgument<string>(["--publish"],helpMsg:  "The path to the published output directory (e.g. bin/Release/net8.0/publish)", isRequired: true);
+        arg.AddArgument<string>(["--publish"], helpMsg: "The path to the published output directory (e.g. bin/Release/net8.0/publish)");
         arg.AddArgument<int>(["--port"], helpMsg: "The port the service listens on (default: 5000)");
         arg.AddArgument<string>(["--env"], helpMsg: "The ASPNETCORE_ENVIRONMENT value to set on the service (default: Production)");
         arg.AddArgument<string>(["--author"], helpMsg: "The author of the service (optional)");
+        arg.AddArgument<string>(["--user"], helpMsg: "The user to run the service as (optional)");
         arg.AddArgument<string>(["--description"], helpMsg: "A description of the service (optional)");
         arg.AddArgument<string>(["--cf-tunnel-id"], helpMsg: "Cloudflare Tunnel ID for Cloudflare integration (optional, but requires all CF flags if used)");
         arg.AddArgument<string>(["--cf-tunnel-name"], helpMsg: "Cloudflare Tunnel Name for Cloudflare integration (optional, but requires all CF flags if used)");
@@ -29,17 +29,16 @@ public class Arguments
 
     public static void LoadDeployArgs(ArgInvoke arg)
     {
-        arg.AddArgument<string>(["--profile-name"], "The name of the profile to load (optional)");
-        arg.AddArgument<string>(["--package"], "The path to the package file to deploy (e.g. MyApp-1.0.0.bkpkg)", isRequired: true);
-        arg.AddArgument<string>(["--host"], "The hostname or IP address of the target server", isRequired: true);
-        arg.AddArgument<int>(["--port"], "The SSH port of the target server (default: 22)");
-        arg.AddArgument<string>(["--user"], "The SSH user to connect as", isRequired: true);
-        arg.AddArgument<string>(["--key"], "The path to the SSH private key for authentication", isRequired: true);
-        arg.AddArgument<string>(["--profile"], "The name of a profile to load default values from (optional)");
-        arg.AddArgument<bool>(["--force"], "Whether to skip the trust prompt and force deployment (default: false)");
-        arg.AddArgument<int>(["--err-lines"], "The number of journal lines to show on deployment failure (default: 30)");
-        arg.AddArgument<string>(["--pub-key"], "The path to a public key to use for signature verification (optional, overrides default public key)");
-        arg.AddArgument<bool>(["--no-verify"], "Whether to skip signature verification (not recommended)");
+        arg.AddArgument<string>(["--package"], helpMsg: "The path to the package file to deploy (e.g. MyApp-1.0.0.bkpkg)");
+        arg.AddArgument<string>(["--ssh-host"], helpMsg: "The hostname or IP address of the target server");
+        arg.AddArgument(["--ssh-port"], helpMsg: "The SSH port of the target server (default: 22)", defaultValue: 22);
+        arg.AddArgument<string>(["--ssh-user"], helpMsg: "The SSH user to connect as");
+        arg.AddArgument<string>(["--ssh-key"], helpMsg: "The path to the SSH private key for authentication");
+        arg.AddArgument<string>(["--profile"], helpMsg: "The name of a profile to load default values from (optional)");
+        arg.AddArgument<bool>(["--force"], helpMsg: "Whether to skip the trust prompt and force deployment (default: false)");
+        arg.AddArgument<int>(["--err-lines"], helpMsg: "The number of journal lines to show on deployment failure (default: 30)");
+        arg.AddArgument<string>(["--pub-key"], helpMsg: "The path to a public key to use for signature verification (optional, overrides default public key)");
+        arg.AddArgument<bool>(["--no-verify"], helpMsg: "Whether to skip signature verification (not recommended)");
     }
     // ── Build Arguments ──────────────────────────────────────────────────────────
 
@@ -90,6 +89,7 @@ public class Arguments
             if (args.SingleOrDefault(a => a.Parameters.Contains("--port")) is ArgStore<int> portPf) a.Port = portPf.TypedValue;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--env")) is ArgStore<string> envPf) a.Environment = envPf.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--author")) is ArgStore<string> authorPf) a.Author = authorPf.Value;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--user")) is ArgStore<string> userPf) a.User = userPf.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--description")) is ArgStore<string> descriptionPf) a.Description = descriptionPf.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--cf-tunnel-id")) is ArgStore<string> cfTid) a.CfTunnelId = cfTid.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--cf-tunnel-name")) is ArgStore<string> cfName) a.CfTunnelName = cfName.Value;
@@ -100,7 +100,11 @@ public class Arguments
             if (args.SingleOrDefault(a => a.Parameters.Contains("--env-file")) is ArgStore<string> envFile) a.EnvFile = envFile.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--sign")) is ArgStore<bool> signer) a.Sign = signer.TypedValue;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--signing-key")) is ArgStore<string> signKey) a.SigningKeyPath = signKey.Value;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--out")) is ArgStore<string> outDir) a.OutDir = outDir.Value;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--out")) is ArgStore<string> outDir
+                && !string.IsNullOrWhiteSpace(outDir.Value))
+                a.OutDir = outDir.Value;
+            if (a.Sign && string.IsNullOrWhiteSpace(a.SigningKeyPath))
+                throw new ArgumentException("Signing key path must be provided when --sign is true");
 
             return a;
         }
@@ -145,10 +149,10 @@ public class Arguments
             var a = new DeployArgs();
 
             if (args.SingleOrDefault(a => a.Parameters.Contains("--package")) is ArgStore<string> package) a.PackagePath = package.Value;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--host")) is ArgStore<string> host) a.Host = host.Value;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--port")) is ArgStore<int> port) a.SshPort = port.TypedValue;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--user")) is ArgStore<string> user) a.SshUser = user.Value;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--key")) is ArgStore<string> keyPath) a.KeyPath = keyPath.Value;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--ssh-host")) is ArgStore<string> host) a.Host = host.Value;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--ssh-port")) is ArgStore<int> port) a.SshPort = port.TypedValue;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--ssh-user")) is ArgStore<string> user) a.SshUser = user.Value;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--ssh-key")) is ArgStore<string> keyPath) a.KeyPath = keyPath.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--profile")) is ArgStore<string> profile) a.Profile = profile.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--force")) is ArgStore<bool> force) a.Force = force.TypedValue;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--err-lines")) is ArgStore<int> errLines) a.ErrLines = errLines.TypedValue;
@@ -163,9 +167,9 @@ public class Arguments
             // If a profile is supplied, missing fields will be filled in before Validate() is called
             if (string.IsNullOrWhiteSpace(PackagePath)) yield return "--package is required (or set outDir in profile)";
             if (!string.IsNullOrWhiteSpace(PackagePath) && !File.Exists(PackagePath)) yield return $"Package file not found: {PackagePath}";
-            if (string.IsNullOrWhiteSpace(Host)) yield return "--host is required (or set in profile)";
-            if (string.IsNullOrWhiteSpace(SshUser)) yield return "--user is required (or set in profile)";
-            if (string.IsNullOrWhiteSpace(KeyPath)) yield return "--key is required (or set in profile)";
+            if (string.IsNullOrWhiteSpace(Host)) yield return "--ssh-host is required (or set in profile)";
+            if (string.IsNullOrWhiteSpace(SshUser)) yield return "--ssh-user is required (or set in profile)";
+            if (string.IsNullOrWhiteSpace(KeyPath)) yield return "--ssh-key is required (or set in profile)";
             if (!string.IsNullOrWhiteSpace(KeyPath) && !File.Exists(KeyPath)) yield return $"SSH key not found: {KeyPath}";
         }
     }

@@ -13,6 +13,14 @@ public static class ChecksumHelper
         return Convert.ToHexString(hash).ToLowerInvariant();
     }
 
+    public static async Task<string> ComputeSha512Async(string filePath)
+    {
+        using var sha = SHA512.Create();
+        await using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
+        var hash = await sha.ComputeHashAsync(stream);
+        return Convert.ToHexString(hash).ToLowerInvariant();
+    }
+
     public static bool Verify(string filePath, string expectedChecksum)
     {
         var actual = ComputeSha512(filePath);

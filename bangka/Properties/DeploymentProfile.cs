@@ -84,7 +84,6 @@ public class DeploymentProfile
 
     public static DeploymentProfile Load(string nameOrPath)
     {
-        // Accept either a bare name ("bfdllms") or a direct path
         var path = File.Exists(nameOrPath)
             ? nameOrPath
             : ProfilePath(nameOrPath);

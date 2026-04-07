@@ -178,7 +178,7 @@ public static class DeployUserCommand
                 $"  nano ~/.ssh/bangka_{Username}\n" +
                 $"  chmod 600 ~/.ssh/bangka_{Username}\n\n" +
                 "Then deploy with:\n" +
-                $"  bangka-master deploy --user {Username} --key ~/.ssh/bangka_{Username} ...")
+                $"  bangka deploy --user {Username} --key ~/.ssh/bangka_{Username} ...")
             .Header("[bold green] Setup Complete [/]")
             .BorderColor(Color.Green));
         return 0;

@@ -32,6 +32,18 @@ public static class ProfileCommand
             Environment.Exit(ShowProfile(showInvoke!));
         }, "Show details of a profile by name");
         showInvoke.AddArgument<string>(["--name"], helpMsg: "Profile name to show", isRequired: true);
+
+        ArgInvoke? updateInvoke = null;
+        updateInvoke = argInvoke.AddArgumentAction(["update"],
+        () =>
+        {
+            Environment.Exit(CreateProfile(updateInvoke!, true));
+        }, "Update an existing profile (same flags as create, but requires --name)");
+        updateInvoke.ArgumentZeroAction = ArgSharp.ArgSharpClass.ArgZeroAction.TreatAsSuccess;
+        Arguments.LoadBuildArgs(updateInvoke);
+        Arguments.LoadDeployArgs(updateInvoke);
+        updateInvoke.AddArgument<string>(["--name"], helpMsg: "Profile name to update (must already exist)", isRequired: true);
+
         ArgInvoke? deleteInvoke = null;
         deleteInvoke = argInvoke.AddArgumentAction(["delete"],
         () =>
@@ -41,49 +53,30 @@ public static class ProfileCommand
         deleteInvoke.AddArgument<string>(["--name"], helpMsg: "Profile name to delete", isRequired: true);
     }
 
-    private static int CreateProfile(ArgInvoke argInvoke)
+    private static int CreateProfile(ArgInvoke argInvoke, bool isUpdate = false)
     {
         var build = Arguments.BuildArgs.Parse(argInvoke);
         var deploy = Arguments.DeployArgs.Parse(argInvoke);
 
         string? profileName = null;
-        if (argInvoke.GetArgStoreValues().SingleOrDefault(a => a.Parameters.Contains("--profile-name")) is ArgStore<string> namePf)
+        if (argInvoke.GetArgStoreValues().SingleOrDefault(a => a.Parameters.Contains("--profile")) is ArgStore<string> namePf)
             profileName = namePf.Value;
 
         if (string.IsNullOrWhiteSpace(profileName))
         {
+            if (isUpdate)
+            {
+                AnsiConsole.MarkupLine("[red]Profile name is required for update.[/]");
+                return 1;
+            }
             // Fall back to --name if provided
             profileName = string.IsNullOrWhiteSpace(build.Name)
                 ? AnsiConsole.Ask<string>("[cyan]Profile name:[/]")
                 : build.Name;
         }
 
-        var profile = new DeploymentProfile
-        {
-            Name = build.Name,
-            Version = build.Version,
-            PublishDir = build.PublishDir,
-            EntryDll = build.EntryDll ?? string.Empty,
-            Port = build.Port,
-            User = build.User,
-            Environment = build.Environment,
-            Author = build.Author,
-            Description = build.Description,
-            EnvFile = build.EnvFile ?? string.Empty,
-            OutDir = build.OutDir,
-            Host = deploy.Host,
-            SshUser = deploy.SshUser,
-            KeyPath = deploy.KeyPath,
-            SshPort = deploy.SshPort,
-            CfTunnelId = build.CfTunnelId ?? string.Empty,
-            CfTunnelName = build.CfTunnelName ?? string.Empty,
-            CfHostname = build.CfHostname ?? string.Empty,
-            CfCredentials = build.CfCredentials ?? string.Empty,
-        };
-
-        // Check if profile already exists
         var existingPath = DeploymentProfile.ProfilePath(profileName);
-        if (File.Exists(existingPath))
+        if (File.Exists(existingPath) && !isUpdate)
         {
             AnsiConsole.MarkupLine($"[yellow]Profile '{profileName}' already exists.[/]");
             if (!AnsiConsole.Confirm("Overwrite?", defaultValue: false))
@@ -93,8 +86,65 @@ public static class ProfileCommand
             }
         }
 
+        DeploymentProfile profile;
+
+        if (isUpdate)
+        {
+            profile = DeploymentProfile.Load(profileName);
+            // Update fields if they were provided in the arguments
+            profile.Name = string.IsNullOrWhiteSpace(build.Name) ? profile.Name : build.Name;
+            profile.Version = string.IsNullOrWhiteSpace(build.Version) ? profile.Version : build.Version;
+            profile.PublishDir = string.IsNullOrWhiteSpace(build.PublishDir) ? profile.PublishDir : build.PublishDir;
+            profile.EntryDll = string.IsNullOrWhiteSpace(build.EntryDll) ? profile.EntryDll : build.EntryDll;
+            profile.Port = build.Port != 0 ? build.Port : profile.Port;
+            profile.User = string.IsNullOrWhiteSpace(build.User) ? profile.User : build.User;
+            profile.Environment = string.IsNullOrWhiteSpace(build.Environment) ? profile.Environment : build.Environment;
+            profile.Description = string.IsNullOrWhiteSpace(build.Description) ? profile.Description : build.Description;
+            profile.EnvFile = string.IsNullOrWhiteSpace(build.EnvFile) ? profile.EnvFile : build.EnvFile;
+            profile.OutDir = string.IsNullOrWhiteSpace(build.OutDir) ? profile.OutDir : build.OutDir;
+            profile.Host = string.IsNullOrWhiteSpace(deploy.Host) ? profile.Host : deploy.Host;
+            profile.SshUser = string.IsNullOrWhiteSpace(deploy.SshUser) ? profile.SshUser : deploy.SshUser;
+            profile.KeyPath = string.IsNullOrWhiteSpace(deploy.KeyPath) ? profile.KeyPath : deploy.KeyPath;
+            profile.SshPort = deploy.SshPort != 0 ? deploy.SshPort : profile.SshPort;
+            profile.CfTunnelId = string.IsNullOrWhiteSpace(build.CfTunnelId) ? profile.CfTunnelId : build.CfTunnelId;
+            profile.CfTunnelName = string.IsNullOrWhiteSpace(build.CfTunnelName) ? profile.CfTunnelName : build.CfTunnelName;
+            profile.CfHostname = string.IsNullOrWhiteSpace(build.CfHostname) ? profile.CfHostname : build.CfHostname;
+            profile.CfCredentials = string.IsNullOrWhiteSpace(build.CfCredentials) ? profile.CfCredentials : build.CfCredentials;
+        }
+        else
+        {
+            profile = new DeploymentProfile
+            {
+                Name = build.Name,
+                Version = build.Version,
+                PublishDir = build.PublishDir,
+                EntryDll = build.EntryDll ?? string.Empty,
+                Port = build.Port,
+                User = build.User,
+                Environment = build.Environment,
+                Author = build.Author,
+                Description = build.Description,
+                EnvFile = build.EnvFile ?? string.Empty,
+                OutDir = build.OutDir,
+                Host = deploy.Host,
+                SshUser = deploy.SshUser,
+                KeyPath = deploy.KeyPath,
+                SshPort = deploy.SshPort,
+                CfTunnelId = build.CfTunnelId ?? string.Empty,
+                CfTunnelName = build.CfTunnelName ?? string.Empty,
+                CfHostname = build.CfHostname ?? string.Empty,
+                CfCredentials = build.CfCredentials ?? string.Empty,
+            };
+        }
+        // Check if profile already exists
+
+
         profile.Save(profileName);
 
+        if(isUpdate)
+        {
+            AnsiConsole.MarkupLine($"[green]Profile '{profileName}' updated successfully.[/]");
+        }
         AnsiConsole.Write(new Panel(
                 $"[bold white]{profileName}[/]\n" +
                 $"[grey]Path:[/] [white]{DeploymentProfile.ProfilePath(profileName)}[/]")

@@ -18,6 +18,11 @@ public static class DeployCommand
     }
     public static int Run(ArgInvoke invoke)
     {
+        return RunAsync(invoke).GetAwaiter().GetResult();
+    }
+
+    private static async Task<int> RunAsync(ArgInvoke invoke)
+    {
         DeployArgs opts;
         try { opts = DeployArgs.Parse(invoke); }
         catch (ArgumentException ex)
@@ -100,7 +105,7 @@ public static class DeployCommand
         }
 
         AnsiConsole.Write(new Rule(
-                $"[bold cyan]Deploying [white]{Markup.Escape(meta.Name)}[/] v[white]{Markup.Escape(meta.Version)}[/] to [white]{Markup.Escape(opts.Host)}[/]")
+                $"[bold cyan]Deploying [white]{Markup.Escape(meta.Name)}[/] v[white]{Markup.Escape(meta.Version)}[/] to [white]{Markup.Escape(opts.Host)}:{Markup.Escape(opts.SshPort.ToString())}[/][/]")
             .RuleStyle("cyan"));
         AnsiConsole.WriteLine();
 
@@ -372,12 +377,23 @@ public static class DeployCommand
             long fileSize = new FileInfo(opts.PackagePath).Length;
             AnsiConsole.MarkupLine($"  [grey]Package size: {fileSize / 1024.0:F1} KB[/]");
 
-            AnsiConsole.Status()
-                .Spinner(Spinner.Known.Dots)
-                .SpinnerStyle(Style.Parse("cyan"))
-                .Start("Uploading via SCP...", _ =>
+            await AnsiConsole.Progress()
+                .AutoRefresh(true)
+                .Columns(
+                    new TaskDescriptionColumn(),
+                    new ProgressBarColumn(),
+                    new TransferSpeedColumn(),
+                    new SpinnerColumn())
+                .StartAsync(async ctx =>
                 {
-                    session.Upload(opts.PackagePath, remoteTemp);
+                    var uploadTask = ctx.AddTask("[cyan]Uploading via SCP[/]", maxValue: fileSize);
+                    await Task.Run(() =>
+                        session.Upload(opts.PackagePath, remoteTemp, (uploaded, total) =>
+                        {
+                            uploadTask.Value = uploaded;
+                        }));
+                    uploadTask.Value = fileSize;
+                    uploadTask.StopTask();
                 });
             Pass($"Package uploaded to {remoteTemp}");
 
@@ -473,7 +489,6 @@ public static class DeployCommand
             }
 
             session.RunPrivileged($"mkdir -p {installPath}");
-            session.RunPrivileged($"chown -R {svcConfig.User}:{svcConfig.User} {installBase} 2>/dev/null || sudo chown -R root:root {installBase}");
 
             var (svcExists, _, _) = session.Run($"test -f {serviceFile} && echo 'exists'");
             if (svcExists != 0)
@@ -496,8 +511,18 @@ public static class DeployCommand
             if (!string.IsNullOrWhiteSpace(svcConfig.EnvironmentFile))
                 AnsiConsole.MarkupLine($"  [grey]EnvironmentFile: {svcConfig.EnvironmentFile}[/]");
 
-            var unitContent = EscapeForShell(svcConfig.ToUnitFileContent());
-            session.RunPrivileged($"printf '%s' {unitContent} > {serviceFile}");
+            var localUnitTmp = Path.GetTempFileName();
+            try
+            {
+                File.WriteAllText(localUnitTmp, svcConfig.ToUnitFileContent());
+                var remoteUnitTmp = $"/tmp/{meta.Name}-{Guid.NewGuid():N}.service";
+                session.Upload(localUnitTmp, remoteUnitTmp);
+                session.RunPrivilegedOrThrow($"mv {remoteUnitTmp} {serviceFile}");
+            }
+            finally
+            {
+                File.Delete(localUnitTmp);
+            }
             session.RunPrivileged($"chmod 644 {serviceFile}");
             session.RunPrivileged("systemctl daemon-reload");
             Pass("Rollback snapshot created and systemd unit registered.");
@@ -557,6 +582,8 @@ public static class DeployCommand
                 return 1;
             }
 
+            session.RunPrivilegedOrThrow($"rm -rf {installPath}");
+            session.RunPrivilegedOrThrow($"mkdir -p {installPath}");
             session.RunPrivilegedOrThrow($"cp -r {remoteExtract}/data/. {installPath}/");
 
             // Verify entry DLL landed
@@ -615,13 +642,25 @@ public static class DeployCommand
                 AnsiConsole.MarkupLine("  [grey]Cloudflare: cloudflared reloaded.[/]");
             }
 
+            session.RunPrivileged($"chown -R {svcConfig.User}:{svcConfig.User} {installPath}");
+            session.RunPrivileged($"chmod -R o+rX {installPath}");
             session.RunPrivileged($"chmod +x {installPath}/{meta.Name} 2>/dev/null || true");
 
             // Persist metadata to install dir for future same-version checks
             // Persist metadata to install dir for future same-version checks
             var metaXml = $"""<?xml version="1.0"?><metadata><n>{meta.Name}</n><version>{meta.Version}</version><checksum>{meta.Checksum}</checksum><builtAt>{meta.BuiltAt}</builtAt><entryDll>{meta.EntryDll}</entryDll></metadata>""";
-            var metaB64Str = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(metaXml));
-            session.RunPrivileged($"echo {metaB64Str} | base64 -d > {installPath}/.bangka-meta.xml");
+            var localMetaTmp = Path.GetTempFileName();
+            try
+            {
+                File.WriteAllText(localMetaTmp, metaXml);
+                var remoteMetaTmp = $"/tmp/{meta.Name}-meta-{Guid.NewGuid():N}.xml";
+                session.Upload(localMetaTmp, remoteMetaTmp);
+                session.RunPrivilegedOrThrow($"mv {remoteMetaTmp} {installPath}/.bangka-meta.xml");
+            }
+            finally
+            {
+                File.Delete(localMetaTmp);
+            }
 
             session.Run($"rm -rf {remoteExtract} {remoteTemp}");
             Pass($"Files installed to {installPath}.");
@@ -633,20 +672,22 @@ public static class DeployCommand
             session.RunPrivileged($"systemctl start {meta.Name}");
 
             bool healthy = false;
-            for (int attempt = 1; attempt <= 5; attempt++)
+            const int maxAttempts = 8;
+            Thread.Sleep(4000); // initial grace period for process to spawn
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
             {
-                Thread.Sleep(3000);
-                var (activeCode, activeOut, _) = session.Run($"systemctl is-active {meta.Name}");
-                AnsiConsole.MarkupLine($"  [grey]Attempt {attempt}/5 — status: {activeOut.Trim()}[/]");
+                var (_, activeOut, _) = session.Run($"systemctl is-active {meta.Name}");
                 var status = activeOut.Trim();
+                AnsiConsole.MarkupLine($"  [grey]Attempt {attempt}/{maxAttempts} — status: {status}[/]");
                 if (status == "active")
                 {
                     healthy = true;
                     break;
                 }
-                // activating = still starting up (e.g. running migrations) — keep waiting
-                if (status == "failed")
-                    break; // no point waiting further
+                if (status == "failed" || status == "inactive")
+                    break; // definitive failure states — no point waiting
+                // activating = still starting, keep polling
+                Thread.Sleep(3000);
             }
 
             if (!healthy)
@@ -659,7 +700,7 @@ public static class DeployCommand
                 AnsiConsole.MarkupLine($"[grey]{Markup.Escape(statusOut)}[/]");
 
                 // ── journal lines (configurable via --err-lines) ──────────────
-                var (_, journalOut, _) = session.Run(
+                var (_, journalOut, _) = session.RunPrivileged(
                     $"journalctl -u {meta.Name} --no-pager -n {opts.ErrLines} --output short-precise");
                 AnsiConsole.Write(new Rule($"[red]Journal (last {opts.ErrLines} lines)[/]").RuleStyle("red"));
                 AnsiConsole.MarkupLine($"[grey]{Markup.Escape(journalOut)}[/]");

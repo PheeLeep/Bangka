@@ -21,6 +21,11 @@ public static class BuildCommand
 
     public static int Run(ArgInvoke invoke)
     {
+        return RunAsync(invoke).GetAwaiter().GetResult();
+    }
+
+    private static async Task<int> RunAsync(ArgInvoke invoke)
+    {
         BuildArgs opts;
         try
         {
@@ -31,7 +36,7 @@ public static class BuildCommand
             AnsiConsole.MarkupLine($"[red]Argument error:[/] {ex.Message}");
             return 1;
         }
-
+        Console.WriteLine(opts.Profile);
         // ── Load profile if supplied, CLI flags override profile values ─────
         if (!string.IsNullOrWhiteSpace(opts.Profile))
         {
@@ -59,12 +64,63 @@ public static class BuildCommand
 
         AnsiConsole.MarkupLine($"[bold cyan]Building package[/] [white]{opts.Name}[/] v[white]{opts.Version}[/]\n");
 
+        // ── Resolve entry DLL before entering Progress (Prompt can't run inside Progress) ──
+        string entryDll;
+        if (!string.IsNullOrWhiteSpace(opts.EntryDll))
+        {
+            var explicitPath = Path.Combine(opts.PublishDir, opts.EntryDll);
+            if (!File.Exists(explicitPath))
+            {
+                AnsiConsole.MarkupLine($"[red]--dll '{opts.EntryDll}' not found in publish directory: {opts.PublishDir}[/]");
+                return 1;
+            }
+            entryDll = opts.EntryDll;
+            AnsiConsole.MarkupLine($"  [grey]Entry DLL (explicit): {entryDll}[/]");
+        }
+        else
+        {
+            var runtimeConfigs = Directory.GetFiles(opts.PublishDir, "*.runtimeconfig.json",
+                SearchOption.TopDirectoryOnly);
+            if (runtimeConfigs.Length == 1)
+            {
+                entryDll = Path.GetFileName(runtimeConfigs[0]).Replace(".runtimeconfig.json", ".dll");
+                AnsiConsole.MarkupLine($"  [grey]Entry DLL (auto-detected): {entryDll}[/]");
+            }
+            else if (runtimeConfigs.Length > 1)
+            {
+                var nameMatch = runtimeConfigs.FirstOrDefault(r =>
+                    Path.GetFileName(r).StartsWith(opts.Name, StringComparison.OrdinalIgnoreCase));
+                if (nameMatch != null)
+                {
+                    entryDll = Path.GetFileName(nameMatch).Replace(".runtimeconfig.json", ".dll");
+                    AnsiConsole.MarkupLine($"  [grey]Entry DLL (matched by name): {entryDll}[/]");
+                }
+                else
+                {
+                    AnsiConsole.MarkupLine("[yellow]Multiple entry points found. Pick the correct DLL:[/]");
+                    var choices = runtimeConfigs
+                        .Select(r => Path.GetFileName(r).Replace(".runtimeconfig.json", ".dll"))
+                        .ToList();
+                    entryDll = AnsiConsole.Prompt(
+                        new SelectionPrompt<string>()
+                            .Title("[cyan]Which is the entry DLL?[/]")
+                            .AddChoices(choices));
+                    AnsiConsole.MarkupLine($"  [grey]Entry DLL (selected): {entryDll}[/]");
+                }
+            }
+            else
+            {
+                entryDll = $"{opts.Name}.dll";
+                AnsiConsole.MarkupLine($"  [yellow]No .runtimeconfig.json found — defaulting to {entryDll}[/]");
+            }
+        }
+
         var stagingDir = Path.Combine(Path.GetTempPath(), $"bangka-build-{Guid.NewGuid():N}");
         Directory.CreateDirectory(stagingDir);
 
         try
         {
-            AnsiConsole.Progress()
+            await AnsiConsole.Progress()
                .AutoRefresh(true)
                .Columns(
                    new TaskDescriptionColumn(),
@@ -78,64 +134,11 @@ public static class BuildCommand
                    Directory.CreateDirectory(dataDir);
                    await CopyDirectoryAsync(opts.PublishDir, dataDir, copyTask);
                    copyTask.Value = 100;
+                   copyTask.StopTask();
 
                    // ── Step 2: Write metadata.xml ───────────────────────────────────────
                    var metaTask = ctx.AddTask("[cyan]Writing metadata.xml[/]");
                    var installPath = $"/home/{opts.User}/bangkasvcs/{opts.Name}";
-
-                   // Resolve entry DLL — explicit flag wins, otherwise find via .runtimeconfig.json
-                   string entryDll;
-                   if (!string.IsNullOrWhiteSpace(opts.EntryDll))
-                   {
-                       // User provided it explicitly — verify it exists in the publish dir
-                       var explicitPath = Path.Combine(opts.PublishDir, opts.EntryDll);
-                       if (!File.Exists(explicitPath))
-                           throw new FileNotFoundException(
-                               $"--dll '{opts.EntryDll}' not found in publish directory: {opts.PublishDir}");
-                       entryDll = opts.EntryDll;
-                       AnsiConsole.MarkupLine($"  [grey]Entry DLL (explicit): {entryDll}[/]");
-                   }
-                   else
-                   {
-                       // Auto-detect via .runtimeconfig.json — most reliable indicator of entry assembly
-                       var runtimeConfigs = Directory.GetFiles(opts.PublishDir, "*.runtimeconfig.json",
-                           SearchOption.TopDirectoryOnly);
-                       if (runtimeConfigs.Length == 1)
-                       {
-                           entryDll = Path.GetFileName(runtimeConfigs[0]).Replace(".runtimeconfig.json", ".dll");
-                           AnsiConsole.MarkupLine($"  [grey]Entry DLL (auto-detected): {entryDll}[/]");
-                       }
-                       else if (runtimeConfigs.Length > 1)
-                       {
-                           // Multiple runtimeconfigs — pick the one matching meta.Name, else ask user
-                           var nameMatch = runtimeConfigs.FirstOrDefault(r =>
-                               Path.GetFileName(r).StartsWith(opts.Name, StringComparison.OrdinalIgnoreCase));
-                           if (nameMatch != null)
-                           {
-                               entryDll = Path.GetFileName(nameMatch).Replace(".runtimeconfig.json", ".dll");
-                               AnsiConsole.MarkupLine($"  [grey]Entry DLL (matched by name): {entryDll}[/]");
-                           }
-                           else
-                           {
-                               // Ambiguous — list them and prompt
-                               AnsiConsole.MarkupLine("[yellow]Multiple entry points found. Pick the correct DLL:[/]");
-                               var choices = runtimeConfigs
-                                   .Select(r => Path.GetFileName(r).Replace(".runtimeconfig.json", ".dll"))
-                                   .ToList();
-                               entryDll = AnsiConsole.Prompt(
-                                   new SelectionPrompt<string>()
-                                       .Title("[cyan]Which is the entry DLL?[/]")
-                                       .AddChoices(choices));
-                               AnsiConsole.MarkupLine($"  [grey]Entry DLL (selected): {entryDll}[/]");
-                           }
-                       }
-                       else
-                       {
-                           // No runtimeconfig found — fall back to meta.Name.dll with a warning
-                           entryDll = $"{opts.Name}.dll";
-                           AnsiConsole.MarkupLine($"  [yellow]No .runtimeconfig.json found — defaulting to {entryDll}[/]");
-                       }
-                   }
 
                    // Extract env keys from local env file if provided
                    var requiredEnvKeys = new List<string>();
@@ -176,6 +179,7 @@ public static class BuildCommand
                    };
                    meta.Serialize(Path.Combine(stagingDir, "metadata.xml"));
                    metaTask.Value = 100;
+                   metaTask.StopTask();
 
                    // ── Step 3: Write systemdservice.xml ─────────────────────
                    var svcTask = ctx.AddTask("[cyan]Writing systemdservice.xml[/]");
@@ -193,6 +197,7 @@ public static class BuildCommand
 
                    svc.Serialize(Path.Combine(stagingDir, "systemdservice.xml"));
                    svcTask.Value = 100;
+                   svcTask.StopTask();
 
                    // ── Step 4: Write cloudflared.xml (optional) ─────────────
                    if (opts.HasCloudflare)
@@ -214,13 +219,14 @@ public static class BuildCommand
                    var cksumTask = ctx.AddTask("[cyan]Computing SHA-512 checksum[/]");
                    var dataZipTemp = Path.Combine(Path.GetTempPath(), $"data-{Guid.NewGuid():N}.zip");
                    ZipFile.CreateFromDirectory(dataDir, dataZipTemp);
-                   var checksum = ChecksumHelper.ComputeSha512(dataZipTemp);
+                   var checksum = await ChecksumHelper.ComputeSha512Async(dataZipTemp);
                    File.Delete(dataZipTemp);
 
                    // Embed checksum back into metadata
                    meta.Checksum = checksum;
                    meta.Serialize(Path.Combine(stagingDir, "metadata.xml"));
                    cksumTask.Value = 100;
+                   cksumTask.StopTask();
 
                    // ── Step 6: Zip everything into .bangka ────────────────────
                    var packTask = ctx.AddTask("[cyan]Creating .bangka archive[/]");
@@ -230,7 +236,6 @@ public static class BuildCommand
                    ZipFile.CreateFromDirectory(stagingDir, outFile);
                    packTask.Value = 100;
 
-                   await Task.CompletedTask;
                });
 
             var finalPath = Path.Combine(opts.OutDir, $"{opts.Name}-{opts.Version}.bangka");
@@ -274,7 +279,7 @@ public static class BuildCommand
         }
     }
 
-    private static Task CopyDirectoryAsync(string src, string dst, ProgressTask task)
+    private static async Task CopyDirectoryAsync(string src, string dst, ProgressTask task)
     {
         var files = Directory.GetFiles(src, "*", SearchOption.AllDirectories);
         task.MaxValue = files.Length;
@@ -283,11 +288,13 @@ public static class BuildCommand
         {
             var rel = Path.GetRelativePath(src, file);
             var target = Path.Combine(dst, rel);
-            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            File.Copy(file, target, overwrite: true);
+            var targetDir = Path.GetDirectoryName(target);
+            if (!string.IsNullOrEmpty(targetDir))
+                Directory.CreateDirectory(targetDir);
+            await using var srcStream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.Read, 81920, useAsync: true);
+            await using var dstStream = new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.None, 81920, useAsync: true);
+            await srcStream.CopyToAsync(dstStream);
             task.Increment(1);
         }
-
-        return Task.CompletedTask;
     }
 }
