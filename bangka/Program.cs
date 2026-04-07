@@ -77,17 +77,25 @@ public class Program
 
     static int RunVerify(ArgInvoke invoke)
     {
-        string package = invoke.GetValue<string>("--package");
-        string? pubKey = invoke.GetValue<string>("--pub-key");
+        try
+        {
+            string package = invoke.GetValue<string>("--package");
+            string? pubKey = invoke.GetValue<string>("--pub-key");
 
-        var (ok, message) = PackageSigner.VerifyPackage(package, pubKey);
+            var (ok, message) = PackageSigner.VerifyPackage(package, pubKey);
 
-        if (ok)
-            AnsiConsole.MarkupLine($"[bold green]✓[/] {Markup.Escape(message)}");
-        else
-            AnsiConsole.MarkupLine($"[bold red]✗[/] {Markup.Escape(message)}");
+            if (ok)
+                AnsiConsole.MarkupLine($"[bold green][[✓]][/] {Markup.Escape(message)}");
+            else
+                AnsiConsole.MarkupLine($"[bold red][[X]][/] {Markup.Escape(message)}");
 
-        return ok ? 0 : 1;
+            return ok ? 0 : 1;
+        }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error during verification:[/] {Markup.Escape(ex.Message)}\n{Markup.Escape(ex.StackTrace!)}");
+            return 1;
+        }
     }
 
 }

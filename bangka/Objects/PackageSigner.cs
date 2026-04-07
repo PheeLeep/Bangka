@@ -12,7 +12,7 @@ public static class PackageSigner
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".bangka");
 
     public static string PrivateKeyPath => Path.Combine(KeyDir, "signing.key");
-    public static string PublicKeyPath  => Path.Combine(KeyDir, "signing.pub");
+    public static string PublicKeyPath => Path.Combine(KeyDir, "signing.pub");
 
     // ── Key generation ────────────────────────────────────────────────────────
 
@@ -53,22 +53,22 @@ public static class PackageSigner
             throw new FileNotFoundException(
                 $"Signing key not found at {privateKeyPath}. Run: bangka keygen");
 
-        var keyPem  = File.ReadAllText(privateKeyPath);
+        var keyPem = File.ReadAllText(privateKeyPath);
         using var ecdsa = ECDsa.Create();
         ecdsa.ImportECPrivateKey(PemToBytes(keyPem, "EC PRIVATE KEY"), out _);
 
         var packageBytes = File.ReadAllBytes(packagePath);
-        var signature    = ecdsa.SignData(packageBytes, HashAlgorithmName.SHA512);
+        var signature = ecdsa.SignData(packageBytes, HashAlgorithmName.SHA512);
 
         // Derive a short key ID from the public key for identification
         var keyId = ComputeKeyId(ecdsa);
 
         var sigDoc = new SignatureDocument
         {
-            Alg       = "ES256-SHA512",
-            KeyId     = keyId,
+            Alg = "ES256-SHA512",
+            KeyId = keyId,
             Signature = Convert.ToBase64String(signature),
-            SignedAt  = DateTime.UtcNow.ToString("O"),
+            SignedAt = DateTime.UtcNow.ToString("O"),
             PackageHash = ChecksumHelper.ComputeSha512(packagePath)
         };
 
@@ -123,12 +123,12 @@ public static class PackageSigner
         ecdsa.ImportSubjectPublicKeyInfo(PemToBytes(keyPem, "PUBLIC KEY"), out _);
 
         var packageBytes = File.ReadAllBytes(packagePath);
-        var sigBytes     = Convert.FromBase64String(sigDoc.Signature);
+        var sigBytes = Convert.FromBase64String(sigDoc.Signature);
 
         bool valid = ecdsa.VerifyData(packageBytes, sigBytes, HashAlgorithmName.SHA512);
 
         return valid
-            ? (true,  $"Signature valid. Signed at {sigDoc.SignedAt} by key {sigDoc.KeyId}")
+            ? (true, $"Signature valid. Signed at {DateTime.Parse(sigDoc.SignedAt)} by key {sigDoc.KeyId}")
             : (false, $"Signature INVALID — package may have been forged or tampered with.");
     }
 
@@ -137,7 +137,7 @@ public static class PackageSigner
     private static string ComputeKeyId(ECDsa ecdsa)
     {
         var pubBytes = ecdsa.ExportSubjectPublicKeyInfo();
-        var hash     = SHA256.HashData(pubBytes);
+        var hash = SHA256.HashData(pubBytes);
         return Convert.ToHexString(hash)[..16].ToLowerInvariant();
     }
 
@@ -145,8 +145,8 @@ public static class PackageSigner
     {
         var header = $"-----BEGIN {label}-----";
         var footer = $"-----END {label}-----";
-        var start  = pem.IndexOf(header, StringComparison.Ordinal) + header.Length;
-        var end    = pem.IndexOf(footer, StringComparison.Ordinal);
+        var start = pem.IndexOf(header, StringComparison.Ordinal) + header.Length;
+        var end = pem.IndexOf(footer, StringComparison.Ordinal);
         var base64 = pem[start..end].Replace("\n", "").Replace("\r", "").Trim();
         return Convert.FromBase64String(base64);
     }

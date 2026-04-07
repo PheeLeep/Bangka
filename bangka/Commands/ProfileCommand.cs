@@ -141,15 +141,19 @@ public static class ProfileCommand
 
         profile.Save(profileName);
 
-        if(isUpdate)
+        if (isUpdate)
         {
             AnsiConsole.MarkupLine($"[green]Profile '{profileName}' updated successfully.[/]");
         }
-        AnsiConsole.Write(new Panel(
+        else
+        {
+            AnsiConsole.Write(new Panel(
                 $"[bold white]{profileName}[/]\n" +
                 $"[grey]Path:[/] [white]{DeploymentProfile.ProfilePath(profileName)}[/]")
             .Header("[bold green] Profile Saved [/]")
             .BorderColor(Color.Green));
+        }
+
 
         return 0;
     }
