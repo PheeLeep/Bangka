@@ -17,7 +17,7 @@ public class Program
         ArgInvoke? uninstallInvoke = null;
 
         logInvoke = ArgSharpClass.AddArgumentAction(["logs"], () => { LogsCommand.Run(logInvoke!); }, "Tail the systemd journal for a service");
-        statusInvoke = ArgSharpClass.AddArgumentAction(["status"], () => { Environment.Exit(StatusCommand.Run(logInvoke!)); }, "Show health status of a deployed service");
+        statusInvoke = ArgSharpClass.AddArgumentAction(["status"], () => { Environment.Exit(StatusCommand.Run(statusInvoke!)); }, "Show health status of a deployed service");
         rollbackInvoke = ArgSharpClass.AddArgumentAction(["rollback"], () => { Environment.Exit(RollbackCommand.Run(rollbackInvoke!)); }, "Manually trigger rollback to a previous snapshot");
 
         StatusCommand.Load(statusInvoke);

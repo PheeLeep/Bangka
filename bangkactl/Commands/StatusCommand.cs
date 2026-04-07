@@ -8,26 +8,31 @@ public static class StatusCommand
 {
     public static void Load(ArgInvoke argInvoke)
     {
-        argInvoke.AddArgument<string>(["--service-name"], isRequired: true, helpMsg: "Service name");
+        argInvoke.AddArgument(["--service-name"], defaultValue: "", isRequired: true, helpMsg: "Service name");
     }
 
     public static int Run(ArgInvoke argInvoke)
     {
-        var sn = argInvoke.GetArgStoreValues().SingleOrDefault(a => a.Parameters.Contains("--service-name")) as ArgStore<string>;
-        if (sn is null)
+        if (argInvoke.GetArgStoreValues().SingleOrDefault(a => a.Parameters.Contains("--service-name")) is not ArgStore<string> sn
+            || string.IsNullOrWhiteSpace(sn.TypedValue))
         {
             AnsiConsole.MarkupLine("[red]Service name not found[/]");
             return 1;
         }
 
+        var serviceName = sn.TypedValue;
+        if (string.IsNullOrWhiteSpace(serviceName))
+        {
+            AnsiConsole.MarkupLine("[red]Service name cannot be empty[/]");
+            return 1;
+        }
 
-        AnsiConsole.MarkupLine($"[bold]Service status:[/] [green]{sn.Value}[/]\n");
-
+        AnsiConsole.MarkupLine($"[bold]Service status:[/] [green]{serviceName}[/]\n");
 
         // Gather systemd status info
-        var (isActive, activeOut) = RunShell($"systemctl is-active {sn.Value}");
-        var (isEnabled, enabledOut) = RunShell($"systemctl is-enabled {sn.Value}");
-        var (_, statusOut) = RunShell($"systemctl show {sn.Value} --property=MainPID,MemoryCurrent,ActiveEnterTimestamp,NRestarts --no-pager");
+        var (isActive, activeOut) = RunShell($"systemctl is-active {serviceName}");
+        var (isEnabled, enabledOut) = RunShell($"systemctl is-enabled {serviceName}");
+        var (_, statusOut) = RunShell($"systemctl show {serviceName} --property=MainPID --property=MemoryCurrent --property=ActiveEnterTimestamp --property=NRestarts --no-pager");
 
         var props = ParseProperties(statusOut);
 
@@ -47,14 +52,17 @@ public static class StatusCommand
 
         AnsiConsole.Write(table);
 
-        // Show install path info if available
-        var installPath = $"/home/root/bangkasvcs/{sn.Value}";
-        var (pathExists, _) = RunShell($"test -d {installPath} && echo 'yes'");
-        if (pathExists == 0)
+        // Show install path info if available — search across all known bases
+        var installPath = ResolveServicesBases()
+            .Select(b => Path.Combine(b, serviceName))
+            .FirstOrDefault(Directory.Exists);
+
+        if (installPath != null)
         {
             AnsiConsole.MarkupLine($"\n[grey]Install path:[/] [white]{installPath}[/]");
 
-            var (_, metaOut) = RunShell($"cat {installPath}/../.rollback/{sn.Value} 2>/dev/null | ls -1t | head -3");
+            var rollbackDir = Path.Combine(installPath, "..", ".rollback", serviceName);
+            var (_, metaOut) = RunShell($"ls -1t {rollbackDir} 2>/dev/null | head -3");
             if (!string.IsNullOrWhiteSpace(metaOut))
                 AnsiConsole.MarkupLine($"[grey]Snapshots available:[/]\n{Markup.Escape(metaOut)}");
         }
@@ -62,6 +70,24 @@ public static class StatusCommand
         return 0;
     }
 
+    private static IEnumerable<string> ResolveServicesBases()
+    {
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        candidates.Add(Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "bangkasvcs"));
+
+        var sudoUser = Environment.GetEnvironmentVariable("SUDO_USER");
+        if (!string.IsNullOrWhiteSpace(sudoUser))
+            candidates.Add($"/home/{sudoUser}/bangkasvcs");
+
+        if (Directory.Exists("/home"))
+            foreach (var d in Directory.GetDirectories("/home"))
+                candidates.Add(Path.Combine(d, "bangkasvcs"));
+
+        return candidates.Where(Directory.Exists);
+    }
 
     private static (int, string) RunShell(string cmd)
     {
@@ -98,8 +124,15 @@ public static class StatusCommand
 
     private static string FormatMemory(string raw)
     {
-        if (string.IsNullOrWhiteSpace(raw) || !ulong.TryParse(raw, out var bytes))
+        if (string.IsNullOrWhiteSpace(raw) || raw == "[not set]")
             return "—";
+        if (!ulong.TryParse(raw, out var bytes))
+            return "—";
+        // uint64 max means memory accounting is not enabled
+        if (bytes == ulong.MaxValue)
+            return "[grey](accounting disabled)[/]";
+        if (bytes == 0)
+            return "0 B";
         return bytes >= 1_048_576
             ? $"{bytes / 1_048_576.0:F1} MB"
             : $"{bytes / 1024.0:F1} KB";
