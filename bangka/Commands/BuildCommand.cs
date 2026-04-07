@@ -36,7 +36,6 @@ public static class BuildCommand
             AnsiConsole.MarkupLine($"[red]Argument error:[/] {ex.Message}");
             return 1;
         }
-        Console.WriteLine(opts.Profile);
         // ── Load profile if supplied, CLI flags override profile values ─────
         if (!string.IsNullOrWhiteSpace(opts.Profile))
         {
@@ -133,7 +132,6 @@ public static class BuildCommand
                    var dataDir = Path.Combine(stagingDir, "data");
                    Directory.CreateDirectory(dataDir);
                    await CopyDirectoryAsync(opts.PublishDir, dataDir, copyTask);
-                   copyTask.Value = 100;
                    copyTask.StopTask();
 
                    // ── Step 2: Write metadata.xml ───────────────────────────────────────
@@ -161,6 +159,7 @@ public static class BuildCommand
                        else
                        {
                            AnsiConsole.MarkupLine($"  [yellow]No local env file found at '{localCopy}' — env key verification will be skipped at deploy time.[/]");
+                           AnsiConsole.MarkupLine($"  [yellow]If this is your intention. Make sure that the specific env file exists in the server during deployment.[/]");
                        }
                    }
 
@@ -213,6 +212,7 @@ public static class BuildCommand
                        };
                        cf.Serialize(Path.Combine(stagingDir, "cloudflared.xml"));
                        cfTask.Value = 100;
+                       cfTask.StopTask();
                    }
 
                    // ── Step 5: Compute checksum of data dir ──────────────────
@@ -235,7 +235,7 @@ public static class BuildCommand
                    if (File.Exists(outFile)) File.Delete(outFile);
                    ZipFile.CreateFromDirectory(stagingDir, outFile);
                    packTask.Value = 100;
-
+                   packTask.StopTask();
                });
 
             var finalPath = Path.Combine(opts.OutDir, $"{opts.Name}-{opts.Version}.bangka");
