@@ -41,6 +41,54 @@ internal class TrustCommand
 
     }
 
+private static void WaitThenRedact(int seconds, string fingerprint)
+    {
+        using var cts = new CancellationTokenSource();
+
+        // Ctrl+C handler — triggers immediate redact
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true; // don't terminate the process
+            cts.Cancel();
+        };
+
+        // Countdown display + keypress listener
+        var countdown = Task.Run(() =>
+        {
+            for (int i = seconds; i > 0; i--)
+            {
+                if (cts.Token.IsCancellationRequested) break;
+                Console.Write($"\r[grey]Clearing in {i}s... (press any key to clear now)[/]  ");
+                Thread.Sleep(1000);
+            }
+        }, cts.Token);
+
+        var keypress = Task.Run(() =>
+        {
+            if (Console.KeyAvailable) Console.ReadKey(intercept: true); // flush any buffered key
+            while (!cts.Token.IsCancellationRequested)
+            {
+                if (Console.KeyAvailable)
+                {
+                    Console.ReadKey(intercept: true);
+                    cts.Cancel();
+                    break;
+                }
+                Thread.Sleep(50);
+            }
+        }, cts.Token);
+
+        try { Task.WhenAny(countdown, keypress).Wait(); } catch { }
+        cts.Cancel(); // ensure both tasks stop
+
+        Console.WriteLine();
+        Console.Clear();
+        AnsiConsole.MarkupLine("[green]Screen cleared.[/]");
+        AnsiConsole.MarkupLine($"[grey]Fingerprint: {fingerprint}[/]");
+        AnsiConsole.MarkupLine("[grey]Keys are stored at:[/]");
+        AnsiConsole.MarkupLine($"[grey]  Private: {TrustStore.PrivKeyPath}[/]");
+        AnsiConsole.MarkupLine($"[grey]  Public:  {TrustStore.PubKeyPath}[/]");
+    }
 
     private static int ShowStatus()
     {
@@ -94,26 +142,29 @@ internal class TrustCommand
         try
         {
             var (pubPem, fingerprint) = TrustStore.GenerateKeys(force);
+            var privPem = TrustStore.GetPrivateKeyPem()!;
 
-            AnsiConsole.Write(new Panel(
-                    $"[grey]Fingerprint:[/] [white]{fingerprint}[/]")
-                .Header("[bold green] Trust Key Generated [/]")
-                .BorderColor(Color.Green));
-            AnsiConsole.MarkupLine("\n[grey]Public key (PEM):[/]");
+            AnsiConsole.WriteLine();
+            AnsiConsole.MarkupLine("[bold]Copy this keys to your master machine:[/]");
+            AnsiConsole.MarkupLine("\n[grey]Private key (PEM) — for signing on master:[/]");
+            AnsiConsole.MarkupLine($"[yellow]{privPem}[/]");
+            AnsiConsole.MarkupLine("\n[grey]Public key (PEM) — for verification on master:[/]");
             AnsiConsole.MarkupLine($"[dim]{pubPem}[/]");
+            AnsiConsole.MarkupLine($"\n[grey]Fingerprint:[/] [white]{fingerprint}[/]");
 
             AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("[bold]Steps to export:[/]");
-            AnsiConsole.MarkupLine("  1. Copy the public key below to your master machine:");
-            AnsiConsole.MarkupLine($"     [grey]scp root@<server>:{TrustStore.PubKeyPath} ~/.bangka/server-trusted.pub[/]");
-            AnsiConsole.MarkupLine("  2. Sign packages on the master with the matching private key:");
+            AnsiConsole.MarkupLine("[bold]Usage on master:[/]");
+            AnsiConsole.MarkupLine("  1. Save the private key above as ~/.bangka/signing.key on your master machine");
+            AnsiConsole.MarkupLine("  2. Save the public key above as ~/.bangka/signing.pub on your master machine");
+            AnsiConsole.MarkupLine("  3. Sign packages on the master with:");
             AnsiConsole.MarkupLine("     [grey]bangka build ... --sign --signing-key ~/.bangka/signing.key[/]");
-            AnsiConsole.MarkupLine("  3. The signing.key on master must correspond to this trusted.pub on the server.");
-
 
             AnsiConsole.WriteLine();
-            AnsiConsole.MarkupLine("[bold red]HEADS UP!:[/]");
-            AnsiConsole.MarkupLine("[bold]Please keep the public key safe.[/]");
+            AnsiConsole.MarkupLine("[bold red]WARNING:[/]");
+            AnsiConsole.MarkupLine("[bold red]Keep the private key secret and secure![/]");
+            AnsiConsole.MarkupLine("[grey]Screen will clear in 30 seconds, or press any key / Ctrl+C to clear immediately.[/]");
+
+            WaitThenRedact(30, fingerprint);
 
         }
         catch (Exception ex)
@@ -132,12 +183,24 @@ internal class TrustCommand
             return 1;
         }
 
-        var pem = TrustStore.GetPublicKeyPem()!;
+        var pubPem = TrustStore.GetPublicKeyPem()!;
+        var privPem = TrustStore.GetPrivateKeyPem()!;
         var fp = TrustStore.GetFingerprint() ?? "—";
 
-        AnsiConsole.MarkupLine($"[grey]Fingerprint:[/] [white]{fp}[/]\n");
-        AnsiConsole.MarkupLine("[grey]Public key (PEM) — copy this to master as ~/.bangka/signing.pub:[/]\n");
-        AnsiConsole.WriteLine(pem);
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine("[bold]Copy these keys to your master machine:[/]");
+        AnsiConsole.MarkupLine("\n[grey]Private key (PEM) — for signing on master:[/]");
+        AnsiConsole.MarkupLine($"[yellow]{privPem}[/]");
+        AnsiConsole.MarkupLine("\n[grey]Public key (PEM) — for verification on master:[/]");
+        AnsiConsole.MarkupLine($"[dim]{pubPem}[/]");
+        AnsiConsole.MarkupLine($"\n[grey]Fingerprint:[/] [white]{fp}[/]");
+
+        AnsiConsole.WriteLine();
+        AnsiConsole.MarkupLine("[bold red]WARNING:[/]");
+        AnsiConsole.MarkupLine("[bold red]Keep the private key secret and secure![/]");
+        AnsiConsole.MarkupLine("[grey]Screen will clear in 30 seconds, or press any key / Ctrl+C to clear immediately.[/]");
+
+        WaitThenRedact(30, fp);
         return 0;
     }
 

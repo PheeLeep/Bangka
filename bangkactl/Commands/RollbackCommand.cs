@@ -6,11 +6,27 @@ namespace bangkactl.Commands;
 
 public static class RollbackCommand
 {
-    private static readonly string ServicesBase = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-        "bangkasvcs");
+    private static IEnumerable<string> ResolveServicesBases()
+    {
+        var candidates = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        var ownDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "bangkasvcs");
+        candidates.Add(ownDir);
 
+        var sudoUser = Environment.GetEnvironmentVariable("SUDO_USER");
+        if (!string.IsNullOrWhiteSpace(sudoUser))
+            candidates.Add($"/home/{sudoUser}/bangkasvcs");
+
+        if (Directory.Exists("/home"))
+        {
+            foreach (var d in Directory.GetDirectories("/home"))
+                candidates.Add(Path.Combine(d, "bangkasvcs"));
+        }
+
+        return candidates.Where(Directory.Exists);
+    }
 
     public static void Load(ArgInvoke argInvoke)
     {
@@ -29,9 +45,28 @@ public static class RollbackCommand
             return 1;
         }
 
+        var servicesBases = ResolveServicesBases().ToList();
 
-        var installPath = Path.Combine(ServicesBase, sn.TypedValue);
-        var rollbackDir = Path.Combine(ServicesBase, ".rollback", sn.TypedValue);
+        string? foundBase = null;
+        string? installPath = null;
+        foreach (var baseDir in servicesBases)
+        {
+            var candidate = Path.Combine(baseDir, sn.TypedValue);
+            if (Directory.Exists(candidate))
+            {
+                foundBase = baseDir;
+                installPath = candidate;
+                break;
+            }
+        }
+
+        if (foundBase is null)
+        {
+            AnsiConsole.MarkupLine($"[red]Service [white]{sn.TypedValue}[/] not found in any services directory.[/]");
+            return 1;
+        }
+
+        var rollbackDir = Path.Combine(foundBase, ".rollback", sn.TypedValue);
 
         if (!Directory.Exists(rollbackDir))
         {

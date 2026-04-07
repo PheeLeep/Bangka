@@ -29,6 +29,12 @@ public static class TrustStore
         return File.ReadAllText(FingerprintPath).Trim();
     }
 
+    public static string? GetPrivateKeyPem()
+    {
+        if (!File.Exists(PrivKeyPath)) return null;
+        return File.ReadAllText(PrivKeyPath).Trim();
+    }
+
     // ── Key generation ────────────────────────────────────────────────────────
 
     public static (string PublicKeyPem, string Fingerprint) GenerateKeys(bool force = false)
