@@ -16,7 +16,6 @@ public class Program
         ArgSharpClass.IgnoreConflictArgument = true;
 
         ArgInvoke? profileInvoke = null;
-        ArgInvoke? keygenInvoke = null;
         ArgInvoke? verifyInvoke = null;
         ArgInvoke? buildInvoke = null;
         ArgInvoke? deployInvoke = null;
@@ -25,12 +24,6 @@ public class Program
                                                          "Manage deployment profiles (create, list, show, delete)");
         profileInvoke.ArgumentZeroAction = ArgSharpClass.ArgZeroAction.TreatAsSuccess;
         ProfileCommand.Load(profileInvoke!);
-
-        keygenInvoke = ArgSharpClass.AddArgumentAction(["keygen"],
-                                                    () => Environment.Exit(RunKeygen(keygenInvoke!)),
-                                                        "Generate SSH keys for deployment");
-        keygenInvoke.ArgumentZeroAction = ArgSharpClass.ArgZeroAction.TreatAsSuccess;
-        keygenInvoke.AddArgument<bool>(["--force", "-f"], helpMsg: "Overwrite existing keys if they exist");
 
         verifyInvoke = ArgSharpClass.AddArgumentAction(["verify"],
                                                         () => Environment.Exit(RunVerify(verifyInvoke!)),
@@ -82,34 +75,10 @@ public class Program
         }
     }
 
-    private static int RunKeygen(ArgInvoke invoke)
-    {
-        bool force = invoke.GetValue<bool>("--force");
-        try
-        {
-            PackageSigner.GenerateKeys(force);
-            AnsiConsole.Write(new Panel(
-                    $"[grey]Private key:[/] [white]{PackageSigner.PrivateKeyPath}[/]\n" +
-                    $"[grey]Public key: [/] [white]{PackageSigner.PublicKeyPath}[/]\n\n" +
-                    "[yellow]Keep your private key safe — do not share it.[/]\n" +
-                    "[grey]Distribute the public key (.pub) to anyone who needs to verify packages.[/]")
-                .Header("[bold green] Signing Keys Generated [/]")
-                .BorderColor(Color.Green));
-            return 0;
-        }
-        catch (InvalidOperationException ex)
-        {
-            AnsiConsole.MarkupLine($"[red]{Markup.Escape(ex.Message)}[/]");
-            return 1;
-        }
-    }
-
     static int RunVerify(ArgInvoke invoke)
     {
         string package = invoke.GetValue<string>("--package");
         string? pubKey = invoke.GetValue<string>("--pub-key");
-
-
 
         var (ok, message) = PackageSigner.VerifyPackage(package, pubKey);
 
