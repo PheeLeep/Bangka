@@ -97,7 +97,7 @@ public static class RollbackCommand
                 AnsiConsole.MarkupLine($"[red]Snapshot not found:[/] {targetSnap.TypedValue}");
                 AnsiConsole.MarkupLine("[grey]Available snapshots:[/]");
                 foreach (var s in snapshots)
-                    AnsiConsole.MarkupLine($"  [white]{s}[/]");
+                    AnsiConsole.MarkupLine($"[white]{s}[/]");
                 return 1;
             }
             chosen = targetSnap.TypedValue;

@@ -77,23 +77,23 @@ public static class DeployUserCommand
         var (userExists, _, _) = Shell($"id {Username} 2>/dev/null");
         if (userExists != 0)
         {
-            AnsiConsole.MarkupLine($"  [grey]Creating user [white]{Username}[/]...[/]");
+            AnsiConsole.MarkupLine($"- Creating user {Username}...");
             var (createCode, _, createErr) = Shell(
                 $"useradd -m -s /bin/bash -c 'Bangka deploy user' {Username}");
             if (createCode != 0)
             {
-                AnsiConsole.MarkupLine($"  [red]Failed to create user:[/] {createErr}");
+                AnsiConsole.MarkupLine($"[white on red][[!]]:[/] [bold white]Failed to create user:[/] {createErr}");
                 return 1;
             }
-            AnsiConsole.MarkupLine($"  [green]User [white]{Username}[/] created.[/]");
+            AnsiConsole.MarkupLine($"[green]User [white]{Username}[/] created.[/]");
         }
         else
         {
-            AnsiConsole.MarkupLine($"  [grey]User [white]{Username}[/] already exists.[/]");
+            AnsiConsole.MarkupLine($"[grey]User [white]{Username}[/] already exists.[/]");
         }
 
         // ── 2. Generate Ed25519 key pair in memory — never written to disk ───
-        AnsiConsole.MarkupLine("  [grey]Generating Ed25519 key pair...[/]");
+        AnsiConsole.MarkupLine("Generating Ed25519 key pair...");
 
         string privatePem;
         string publicOpenSsh;
@@ -101,9 +101,10 @@ public static class DeployUserCommand
 
         privatePem = GenerateEd25519PrivatePem();
         publicOpenSsh = GenerateEd25519PublicOpenSsh(privatePem, out fingerprint);
+        AnsiConsole.MarkupLine("[green]Key pair generated.[/]");
 
         // ── 3. Install public key into authorized_keys ───────────────────────
-        AnsiConsole.MarkupLine("  [grey]Installing public key...[/]");
+        AnsiConsole.MarkupLine("Installing public key...");
 
         Shell($"mkdir -p {AuthKeysDir}");
         Shell($"chmod 700 {AuthKeysDir}");
@@ -111,7 +112,7 @@ public static class DeployUserCommand
 
         if (force)
         {
-            // Replace existing key — remove old entry first
+            AnsiConsole.MarkupLine("[black on yellow] WARNING [/] Force mode: replacing existing authorized_keys");
             Shell($"echo '{publicOpenSsh}' > {AuthKeysFile}");
         }
         else
@@ -126,7 +127,7 @@ public static class DeployUserCommand
         Shell($"chown {Username}:{Username} {AuthKeysFile}");
 
         // ── 4. Write sudoers rule ─────────────────────────────────────────────
-        AnsiConsole.MarkupLine("  [grey]Writing sudoers rule...[/]");
+        AnsiConsole.MarkupLine("Writing sudoers rule...");
 
         var sudoLine = $"{Username} ALL=(ALL) NOPASSWD: {string.Join(", ", SudoCommands)}";
         var sudoContent = $"""
@@ -146,11 +147,11 @@ public static class DeployUserCommand
         var (visudoCode, _, visudoErr) = Shell($"visudo -c -f {SudoersFile}");
         if (visudoCode != 0)
         {
-            AnsiConsole.MarkupLine($"  [red]Sudoers file failed validation:[/] {visudoErr}");
+            AnsiConsole.MarkupLine($"[white on red][[X]][/]Sudoers file failed validation: {visudoErr}");
             Shell($"rm -f {SudoersFile}");
             return 1;
         }
-        AnsiConsole.MarkupLine("  [grey]Sudoers rule validated.[/]");
+        AnsiConsole.MarkupLine("[green][[✓]][/]Sudoers rule validated.");
 
         // ── 5. Write marker file ──────────────────────────────────────────────
         Shell("mkdir -p /etc/bangka");
@@ -175,10 +176,10 @@ public static class DeployUserCommand
                 "[bold yellow]The private key above was printed once and is NOT stored on this server.[/]\n" +
                 "Copy it to your master machine:\n\n" +
                 $"  [grey]# On master:[/]\n" +
-                $"  nano ~/.ssh/bangka_{Username}\n" +
-                $"  chmod 600 ~/.ssh/bangka_{Username}\n\n" +
+                $"  nano ~/.ssh/bangka-{Username}\n" +
+                $"  chmod 600 ~/.ssh/bangka-{Username}\n\n" +
                 "Then deploy with:\n" +
-                $"  bangka deploy --user {Username} --key ~/.ssh/bangka_{Username} ...")
+                $"  bangka deploy --user {Username} --key ~/.ssh/bangka-{Username} ...")
             .Header("[bold green] Setup Complete [/]")
             .BorderColor(Color.Green));
         return 0;
@@ -250,7 +251,7 @@ public static class DeployUserCommand
         {
             AnsiConsole.MarkupLine("\n[grey]Granted commands:[/]");
             foreach (var cmd in SudoCommands)
-                AnsiConsole.MarkupLine($"  [grey]{cmd}[/]");
+                AnsiConsole.MarkupLine($"[grey]{cmd}[/]");
         }
 
         return 0;
@@ -323,7 +324,10 @@ public static class DeployUserCommand
         try
         {
             File.WriteAllText(tmpKey, privatePem);
-            File.SetUnixFileMode(tmpKey, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(tmpKey, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
 
             var (pubCode, pubOut, pubErr) = Shell($"ssh-keygen -y -f {tmpKey}");
             if (pubCode != 0)

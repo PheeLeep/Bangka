@@ -43,7 +43,7 @@ public static class BuildCommand
             {
                 var profile = DeploymentProfile.Load(opts.Profile);
                 opts = profile.ApplyToBuildArgs(opts);
-                AnsiConsole.MarkupLine($"[grey]Profile loaded: {opts.Profile}[/]");
+                AnsiConsole.MarkupLine($"Profile loaded: [bold]{opts.Profile}[/]");
             }
             catch (FileNotFoundException ex)
             {
@@ -57,7 +57,7 @@ public static class BuildCommand
         {
             AnsiConsole.MarkupLine("[red]Validation failed:[/]");
             foreach (var e in errors)
-                AnsiConsole.MarkupLine($"  [red]•[/] {e}");
+                AnsiConsole.MarkupLine($"[red]•[/] {e}");
             return 1;
         }
 
@@ -74,7 +74,7 @@ public static class BuildCommand
                 return 1;
             }
             entryDll = opts.EntryDll;
-            AnsiConsole.MarkupLine($"  [grey]Entry DLL (explicit): {entryDll}[/]");
+            AnsiConsole.MarkupLine($"Entry DLL (explicit): [bold]{entryDll}[/]");
         }
         else
         {
@@ -83,7 +83,7 @@ public static class BuildCommand
             if (runtimeConfigs.Length == 1)
             {
                 entryDll = Path.GetFileName(runtimeConfigs[0]).Replace(".runtimeconfig.json", ".dll");
-                AnsiConsole.MarkupLine($"  [grey]Entry DLL (auto-detected): {entryDll}[/]");
+                AnsiConsole.MarkupLine($"Entry DLL (auto-detected): [bold]{entryDll}[/]");
             }
             else if (runtimeConfigs.Length > 1)
             {
@@ -92,7 +92,7 @@ public static class BuildCommand
                 if (nameMatch != null)
                 {
                     entryDll = Path.GetFileName(nameMatch).Replace(".runtimeconfig.json", ".dll");
-                    AnsiConsole.MarkupLine($"  [grey]Entry DLL (matched by name): {entryDll}[/]");
+                    AnsiConsole.MarkupLine($"Entry DLL (matched by name): [bold]{entryDll}[/]");
                 }
                 else
                 {
@@ -104,13 +104,13 @@ public static class BuildCommand
                         new SelectionPrompt<string>()
                             .Title("[cyan]Which is the entry DLL?[/]")
                             .AddChoices(choices));
-                    AnsiConsole.MarkupLine($"  [grey]Entry DLL (selected): {entryDll}[/]");
+                    AnsiConsole.MarkupLine($"Entry DLL (selected): [bold]{entryDll}[/]");
                 }
             }
             else
             {
                 entryDll = $"{opts.Name}.dll";
-                AnsiConsole.MarkupLine($"  [yellow]No .runtimeconfig.json found — defaulting to {entryDll}[/]");
+                AnsiConsole.MarkupLine($"[yellow]No .runtimeconfig.json found — defaulting to {entryDll}[/]");
             }
         }
 
@@ -154,12 +154,12 @@ public static class BuildCommand
                                .Select(l => l.Split('=')[0].Trim())
                                .Where(k => !string.IsNullOrWhiteSpace(k))
                                .ToList();
-                           AnsiConsole.MarkupLine($"  [grey]Embedded {requiredEnvKeys.Count} env key(s) from local env file.[/]");
+                           AnsiConsole.MarkupLine($"Embedded {requiredEnvKeys.Count} env key(s) from local env file.[/]");
                        }
                        else
                        {
-                           AnsiConsole.MarkupLine($"  [yellow]No local env file found at '{localCopy}' — env key verification will be skipped at deploy time.[/]");
-                           AnsiConsole.MarkupLine($"  [yellow]If this is your intention. Make sure that the specific env file exists in the server during deployment.[/]");
+                           AnsiConsole.MarkupLine($"[yellow]No local env file found at '{localCopy}' — env key verification will be skipped at deploy time.[/]");
+                           AnsiConsole.MarkupLine($"[yellow]If this is your intention. Make sure that the specific env file exists in the server during deployment.[/]");
                        }
                    }
 
@@ -250,11 +250,11 @@ public static class BuildCommand
                     PackageSigner.SignPackage(finalPath, opts.SigningKeyPath);
                     var sigPath = finalPath + ".sig";
                     signedNote = $"[green]signed[/] → {Path.GetFileName(sigPath)}";
-                    AnsiConsole.MarkupLine($"  [bold green]✓[/] Package signed: {sigPath}");
+                    AnsiConsole.MarkupLine($"[bold green]✓[/] Package signed: {sigPath}");
                 }
                 catch (Exception ex)
                 {
-                    AnsiConsole.MarkupLine($"  [red]Signing failed:[/] {Markup.Escape(ex.Message)}");
+                    AnsiConsole.MarkupLine($"[red]Signing failed:[/] {Markup.Escape(ex.Message)}");
                     AnsiConsole.MarkupLine("  [grey]Package was built but not signed. Run keygen first.[/]");
                 }
             }

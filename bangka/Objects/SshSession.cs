@@ -6,8 +6,8 @@ namespace bangka.Objects;
 
 public sealed class SshSession : IDisposable
 {
-    private readonly SshClient  _ssh;
-    private readonly ScpClient  _scp;
+    private readonly SshClient _ssh;
+    private readonly ScpClient _scp;
     private bool _disposed;
 
     private SshSession(SshClient ssh, ScpClient scp)
@@ -80,8 +80,31 @@ public sealed class SshSession : IDisposable
                 knownHosts.Trust(host, port, capturedFingerprint);
         };
 
-        scp.HostKeyReceived += (_, e) => { e.CanTrust = true; /* re-uses same key already accepted */ };
-
+        scp.HostKeyReceived += (_, e) =>
+        {
+            var scpFingerprint = BitConverter.ToString(e.FingerPrint)
+                                            .Replace("-", ":").ToLowerInvariant();
+            // If SSH already verified this exact fingerprint, trust it
+            if (capturedFingerprint == scpFingerprint)
+            {
+                e.CanTrust = true;
+                return;
+            }
+            // Fingerprint mismatch — reject (could be MITM on SCP channel)
+            AnsiConsole.MarkupLine($"\n[bold red]⚠  WARNING: SCP host fingerprint does not match SSH fingerprint![/]");
+            AnsiConsole.MarkupLine($"   [grey]SSH expected:[/] [red]{capturedFingerprint}[/]");
+            AnsiConsole.MarkupLine($"   [grey]SCP received:[/] [yellow]{scpFingerprint}[/]");
+            if (force)
+            {
+                e.CanTrust = true;
+                knownHosts.Trust(host, port, scpFingerprint);
+            }
+            else
+            {
+                e.CanTrust = false;
+            }
+        };
+        
         ssh.Connect();
         scp.Connect();
 
@@ -161,10 +184,10 @@ public sealed class SshSession : IDisposable
         // Fallback: derive public key via ssh-keygen (master OS must have it)
         var proc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
         {
-            FileName               = "ssh-keygen",
-            Arguments              = $"-y -f \"{privateKeyPath}\"",
+            FileName = "ssh-keygen",
+            Arguments = $"-y -f \"{privateKeyPath}\"",
             RedirectStandardOutput = true,
-            UseShellExecute        = false
+            UseShellExecute = false
         })!;
         var pub = proc.StandardOutput.ReadToEnd().Trim();
         proc.WaitForExit();

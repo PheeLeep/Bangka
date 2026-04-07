@@ -92,7 +92,7 @@ public static class UninstallCommand
 
         if (Directory.Exists(installPath))
         {
-            AnsiConsole.MarkupLine($"  [grey]Removing install directory...[/]");
+            AnsiConsole.MarkupLine($"[grey]Removing install directory...[/]");
             Shell($"rm -rf {installPath}");
         }
 
@@ -102,7 +102,7 @@ public static class UninstallCommand
             var snapshotCount = Directory.GetDirectories(rollbackDir).Length;
             if (snapshotCount > 0)
             {
-                AnsiConsole.MarkupLine($"  [grey]Removing {snapshotCount} rollback snapshot(s)...[/]");
+                AnsiConsole.MarkupLine($"[grey]Removing {snapshotCount} rollback snapshot(s)...[/]");
                 Shell($"rm -rf {rollbackDir}");
             }
         }

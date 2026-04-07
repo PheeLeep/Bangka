@@ -135,7 +135,7 @@ public class DeploymentProfile
             ""
         };
         lines.AddRange(EnvVars.Select(e => $"{e.Key}={e.Value}"));
-        return string.Join("", lines) + "";
+        return string.Join("\n", lines) + "";
     }
 
     /// <summary>
