@@ -1,5 +1,6 @@
 ﻿using ArgSharp;
 using ArgSharp.Args;
+using bangka_lib;
 using bangkactl.Commands;
 namespace bangkactl;
 
@@ -31,7 +32,7 @@ public class Program
 
         DeployUserCommand.Load(ArgSharpClass.AddArgumentAction(["deploy-user"],
                                                                 null,
-                                                                "Create and manage the bangka-deploy SSH user",
+                                                                $"Create and manage the {Constants.BangkaDeployUserName} user",
                                                                 epilog: "These commands require root. Run as root or with sudo.\n\nThe generated private key is printed once and never stored on this server."));
         if (!ArgSharpClass.Parse(args))
         {

@@ -109,54 +109,83 @@ public static class DeployCommand
             .RuleStyle("cyan"));
         AnsiConsole.WriteLine();
 
+        int tabCount = 0;
         // ── STEP 1 — SSH connect + fingerprint check ──────────────────────────
-        BeginStep(1, "Establishing SSH connection");
+        MakeTitle("Establishing SSH connection");
+        tabCount++;
+
+        string sshKey = "";
+        if (!string.IsNullOrWhiteSpace(opts.KeyPath))
+        {
+            sshKey = opts.KeyPath;
+        }
+        else
+        {
+            sshKey = Path.Combine(Constants.SSHStorage, $"{Constants.BangkaDeployUserName}");
+            TabWrite(tabCount, $"[yellow][[!]][/] No SSH key specified with --key. Attempting default path: [bold]{sshKey}[/]");
+        }
+        if (!File.Exists(sshKey))
+        {
+            Fail($"SSH key not found.\n\nMake sure you have a private key from the server's deploy-user init command, or specify its path if you have one with --ssh-key.");
+            return 1;
+        }
+
         var knownHosts = new KnownHostsStore();
         SshSession session;
         try
         {
+            WriteWithIcon(tabCount, IconType.Verbose, $"Authenticating...");
             session = SshSession.Connect(
-                opts.Host, opts.SshPort, opts.SshUser, opts.KeyPath,
-                knownHosts, opts.Force);
+                opts.Host,
+                opts.SshPort,
+                Constants.BangkaDeployUserName,
+                sshKey,
+                knownHosts,
+                opts.Force);
+
         }
         catch (Exception ex)
         {
             Fail($"SSH connection failed: {ex.Message}");
+            AnsiConsole.MarkupLine($"Make sure you run [bold]bangkactl deploy-user init[/] on the server " +
+                                    $"if it's not initiated. Or the SSH key is valid.");
             return 1;
         }
 
+        Pass(tabCount, "SSH connection established.");
         using (session)
         {
-            var pubKey = SshSession.GetPublicKey(opts.KeyPath);
+            var pubKey = SshSession.GetPublicKey(sshKey);
             session.Run("mkdir -p ~/.ssh && chmod 700 ~/.ssh && touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys");
             var (_, authKeys, _) = session.Run("cat ~/.ssh/authorized_keys");
             if (!authKeys.Contains(pubKey.Split(' ')[1]))
             {
                 session.Run($"echo '{pubKey}' >> ~/.ssh/authorized_keys");
-                AnsiConsole.MarkupLine("  [grey]Public key added to remote authorized_keys.[/]");
+                WriteWithIcon(tabCount, IconType.Info, "Public key added to remote authorized_keys.");
             }
             else
             {
-                AnsiConsole.MarkupLine("  [grey]Public key already present on remote.[/]");
+                WriteWithIcon(tabCount, IconType.Info, "Public key already present on remote.");
             }
-            Pass("SSH connection established and key registered.");
+            Pass(tabCount, "SSH key was registered.");
 
             // ── Env file push (if profile has envVars defined) ────────────────
             if (profile != null && profile.EnvVars.Count > 0 &&
                 !string.IsNullOrWhiteSpace(profile.EnvFile))
             {
-                AnsiConsole.MarkupLine($"[grey]Pushing {profile.EnvVars.Count} env var(s) to {profile.EnvFile}...[/]");
+                WriteWithIcon(tabCount, IconType.Verbose, $"Pushing {profile.EnvVars.Count} env var(s) to {profile.EnvFile}...");
                 var envContent = profile.ToEnvFileContent();
                 var envB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(envContent));
-                var envDir = System.IO.Path.GetDirectoryName(profile.EnvFile)!;
+                var envDir = Path.GetDirectoryName(profile.EnvFile)!;
+
                 session.Run($"mkdir -p {envDir}");
                 session.RunOrThrow($"echo {envB64} | base64 -d > {profile.EnvFile}");
                 session.Run($"chmod 600 {profile.EnvFile}");
-                AnsiConsole.MarkupLine($"[grey]Env file written to {profile.EnvFile}[/]");
+                WriteWithIcon(tabCount, IconType.Info, $"Env file written to {profile.EnvFile}");
             }
 
             // ── STEP 2 — Privilege check ──────────────────────────────────────
-            BeginStep(2, "Verifying remote privileges");
+            MakeTitle("\nVerifying remote privileges");
             var (whoCode, whoOut, _) = session.Run("id -u");
             var isRoot = whoCode == 0 && whoOut.Trim() == "0";
             session.SetIsRoot(isRoot);
@@ -164,25 +193,25 @@ public static class DeployCommand
             if (!isRoot)
             {
                 // Non-root — verify passwordless sudo is available for systemctl
-                AnsiConsole.MarkupLine($"Connected as non-root user '{opts.SshUser}' — checking sudo...");
+                WriteWithIcon(tabCount, IconType.Info, $"Connected as non-root user '{Constants.BangkaDeployUserName}' — checking sudo...");
                 var (sudoCode, _, sudoErr) = session.Run("sudo -n systemctl --version 2>&1");
                 if (sudoCode != 0)
                 {
-                    Fail($"User '{opts.SshUser}' is not root and passwordless sudo is not configured.\n" +
+                    Fail($"User '{Constants.BangkaDeployUserName}' is not root and passwordless sudo is not configured.\n" +
                          $"  Run on the server: bangkactl deploy-user init\n" +
-                         $"  Then deploy with:  --user bangka --key <private-key>");
+                         $"  Then deploy with: --key <private-key>");
                     return 1;
                 }
-                AnsiConsole.MarkupLine("  Passwordless sudo confirmed.");
-                Pass($"User '{opts.SshUser}' has passwordless sudo — proceeding.");
+                WriteWithIcon(tabCount, IconType.Info, "Passwordless sudo confirmed.");
+                Pass(tabCount, $"User '{Constants.BangkaDeployUserName}' has passwordless sudo — proceeding.");
             }
             else
             {
-                Pass("Remote is running as root — service management permitted.");
+                Pass(tabCount, "Remote is running as root — service management permitted.");
             }
 
             // ── STEP 2.5 — Query client trust enforcement ────────────────────
-            BeginStep(3, "Checking server trust enforcement");
+            MakeTitle("\nChecking server trust enforcement");
 
             var trustPubPath = "/etc/bangka/trusted.pub";
             var (trustExists, _, _) = session.Run($"test -f {trustPubPath} && echo yes");
@@ -190,19 +219,24 @@ public static class DeployCommand
             if (trustExists == 0)
             {
                 // Server has a trust key — package MUST be signed and verifiable
-                AnsiConsole.MarkupLine("  [cyan]Server trust enforcement is ACTIVE.[/]");
+                WriteWithIcon(tabCount, IconType.Info, "Server trust enforcement is [green]ACTIVE.[/]");
 
                 var (_, serverPubPem, _) = session.Run($"cat {trustPubPath}");
                 var (_, serverFp, _) = session.Run("cat /etc/bangka/trusted.fingerprint 2>/dev/null || echo unknown");
-                AnsiConsole.MarkupLine($"[grey]Server key fingerprint: {Markup.Escape(serverFp.Trim())}[/]");
+
+                Console.WriteLine();
+                AnsiConsole.Write(new Panel(new Markup($"{Markup.Escape(serverFp.Trim())}"))
+                    .Header("Server Fingerprint", Justify.Center)
+                    .BorderStyle(Style.Parse("grey")));
+                Console.WriteLine();
 
                 // Check the package is signed
                 var sigPath = opts.PackagePath + ".sig";
                 if (!File.Exists(sigPath))
                 {
                     Fail("Server requires signed packages but no .sig file found.\n" +
-                         $"  Expected: {sigPath}\n" +
-                         "  Build with --sign and ensure the signing key matches the server's trusted.pub.");
+                         $"Expected: {sigPath}\n" +
+                         "Build with --sign and ensure the signing key matches the server's trusted.pub.");
                     return 1;
                 }
 
@@ -215,21 +249,21 @@ public static class DeployCommand
                     if (!sigOk)
                     {
                         Fail($"Package signature does not satisfy server trust key.\n" +
-                             $"  {sigMsg}\n" +
-                             "  Ensure the package was signed with the key matching this server's trusted.pub.");
+                             $"{sigMsg}\n" +
+                             "Ensure the package was signed with the key matching this server's trusted.pub.");
                         return 1;
                     }
-                    AnsiConsole.MarkupLine($"[grey]{Markup.Escape(sigMsg)}[/]");
+                    WriteWithIcon(tabCount, IconType.Info, $"{Markup.Escape(sigMsg)}");
                 }
                 finally
                 {
                     File.Delete(tmpPub);
                 }
-                Pass("Package signature verified against server trust key.");
+                Pass(tabCount, "Package signature verified against server trust key.");
             }
             else
             {
-                AnsiConsole.MarkupLine("  [grey]No trust key on server — enforcement inactive.[/]");
+                WriteWithIcon(tabCount, IconType.Warning, "No trust key on server — enforcement inactive.");
 
                 // Still run the local sig check from the previous step (warn only)
                 var sigPath = opts.PackagePath + ".sig";
@@ -241,67 +275,70 @@ public static class DeployCommand
                         Fail($"Local signature check failed: {sigMsg}");
                         return 1;
                     }
-                    AnsiConsole.MarkupLine($"[grey]{Markup.Escape(sigMsg)}[/]");
+                    WriteWithIcon(tabCount, IconType.Info, $"{Markup.Escape(sigMsg)}");
                 }
-                Pass("Trust check complete (enforcement not configured on server).");
+                Pass(tabCount, "Trust check complete (enforcement not configured on server).");
             }
 
-            // ── STEP 3 — Remote prerequisite checks ───────────────────────────
-            BeginStep(4, "Checking remote prerequisites");
+
+
+            MakeTitle("\nRemote Prerequisite Check");
             var prereqFailed = false;
 
+            WriteWithIcon(tabCount, IconType.Verbose, "Checking for required software on remote...");
+            tabCount++;
             // dotnet runtime
             var (dotnetCode, dotnetVer, _) = session.Run("dotnet --list-runtimes 2>/dev/null | head -1");
             if (dotnetCode != 0 || string.IsNullOrWhiteSpace(dotnetVer))
             {
-                AnsiConsole.MarkupLine("  [red]✗ dotnet runtime not found.[/] Install with: [grey]sudo apt install -y dotnet-runtime-8.0[/]");
+                WriteWithIcon(tabCount, IconType.Error, "dotnet runtime not found.");
                 prereqFailed = true;
             }
             else
             {
-                AnsiConsole.MarkupLine($"[grey]dotnet: {Markup.Escape(dotnetVer.Trim())}[/]");
+                WriteWithIcon(tabCount, IconType.Success, $"dotnet: [bold]{Markup.Escape(dotnetVer.Trim())}[/]");
             }
 
             // unzip
             var (unzipCode, _, _) = session.Run("which unzip");
             if (unzipCode != 0)
             {
-                AnsiConsole.MarkupLine("  [red][[X]] unzip not found.[/] Install with: [bold]sudo apt install -y unzip[/]");
+                WriteWithIcon(tabCount, IconType.Error, "unzip not found.");
                 prereqFailed = true;
             }
             else
             {
-                AnsiConsole.MarkupLine("unzip: [bold]present[/]");
+                WriteWithIcon(tabCount, IconType.Success, "unzip: [bold]present[/]");
             }
 
             // python3 (reliable extraction fallback)
             var (py3Code, py3Ver, _) = session.Run("python3 --version 2>&1");
-            AnsiConsole.MarkupLine(py3Code == 0
-                ? $"[grey]python3: {Markup.Escape(py3Ver.Trim())}[/]"
-                : "  [yellow]! python3 not found — will use unzip only.[/]");
+            WriteWithIcon(tabCount, IconType.Info, py3Code == 0
+                ? $"python3: [bold]{Markup.Escape(py3Ver.Trim())}[/]"
+                : "python3 not found — will use unzip only.");
 
             // sha512sum
             var (shaCode, _, _) = session.Run("which sha512sum");
             if (shaCode != 0)
             {
-                AnsiConsole.MarkupLine("  [red]✗ sha512sum not found.[/] Install with: [grey]sudo apt install -y coreutils[/]");
+                WriteWithIcon(tabCount, IconType.Error, "sha512sum not found.");
                 prereqFailed = true;
             }
             else
             {
-                AnsiConsole.MarkupLine("  [grey]sha512sum: present[/]");
+                WriteWithIcon(tabCount, IconType.Success, "sha512sum: [bold]present[/]");
             }
 
             // systemctl
             var (sdCode, _, _) = session.Run("which systemctl");
             if (sdCode != 0)
             {
-                AnsiConsole.MarkupLine("  [red]✗ systemctl not found — is this a systemd system?[/]");
+                WriteWithIcon(tabCount, IconType.Error, "systemctl not found — is this a systemd system?");
                 prereqFailed = true;
             }
             else
             {
-                AnsiConsole.MarkupLine("  [grey]systemctl: present[/]");
+                WriteWithIcon(tabCount, IconType.Success, "systemctl: [bold]present[/]");
             }
 
             // EnvironmentFile existence check (if package requires one)
@@ -310,12 +347,12 @@ public static class DeployCommand
                 var (envFileCode, _, _) = session.Run($"test -f {svcConfig.EnvironmentFile} && echo yes");
                 if (envFileCode != 0)
                 {
-                    AnsiConsole.MarkupLine($"[yellow]! EnvironmentFile '{svcConfig.EnvironmentFile}' does not exist on remote.[/]");
-                    AnsiConsole.MarkupLine("  [yellow]  Service may fail to start. Create it before deploying.[/]");
+                    WriteWithIcon(tabCount, IconType.Error, $"EnvironmentFile '{svcConfig.EnvironmentFile}' does not exist on remote.");
+                    WriteWithIcon(tabCount, IconType.Verbose, "Service may fail to start. Create it before deploying.");
                 }
                 else
                 {
-                    AnsiConsole.MarkupLine($"[grey]EnvironmentFile: {svcConfig.EnvironmentFile} (found)[/]");
+                    WriteWithIcon(tabCount, IconType.Info, $"EnvironmentFile: [bold]{Markup.Escape(svcConfig.EnvironmentFile)}[/] (found)");
                 }
             }
 
@@ -338,28 +375,28 @@ public static class DeployCommand
 
                     if (missingKeys.Count > 0 || extraKeys.Count > 0)
                     {
-                        AnsiConsole.MarkupLine("\n  [red]Environment file key mismatch detected:[/]");
+                        WriteWithIcon(tabCount, IconType.Warning, "Environment file key mismatch detected:");
 
                         if (missingKeys.Count > 0)
                         {
-                            AnsiConsole.MarkupLine("  [red]Missing on remote (required by package):[/]");
+                            WriteWithIcon(tabCount, IconType.Warning, "Missing on remote (required by package):");
                             foreach (var k in missingKeys)
                                 AnsiConsole.MarkupLine($"    [red]- {Markup.Escape(k)}[/]");
                         }
 
                         if (extraKeys.Count > 0)
                         {
-                            AnsiConsole.MarkupLine("  [yellow]Extra on remote (not in package):[/]");
+                            WriteWithIcon(tabCount, IconType.Warning, "Extra on remote (not in package):");
                             foreach (var k in extraKeys)
                                 AnsiConsole.MarkupLine($"    [yellow]+ {Markup.Escape(k)}[/]");
                         }
 
-                        AnsiConsole.MarkupLine("\n  [grey]Aborting — update the remote env file to match the required keys and retry.[/]");
+                        WriteWithIcon(tabCount, IconType.Verbose, "Aborting — update the remote env file to match the required keys and retry.");
                         prereqFailed = true;
                     }
                     else
                     {
-                        AnsiConsole.MarkupLine($"[grey]Env file keys: all {meta.RequiredEnvKeys.Count} required key(s) present.[/]");
+                        WriteWithIcon(tabCount, IconType.Info, $"Env file keys: all {meta.RequiredEnvKeys.Count} required key(s) present.");
                     }
                 }
             }
@@ -369,13 +406,17 @@ public static class DeployCommand
                 Fail("One or more prerequisites are missing on the remote host. Install them and retry.");
                 return 1;
             }
-            Pass("All prerequisites satisfied.");
+            tabCount--;
+            Pass(tabCount, "All prerequisites satisfied.");
 
-            // ── STEP 4 — File transfer ────────────────────────────────────────
-            BeginStep(5, "Transferring package");
+
+
+
+            MakeTitle("\nTransferring package");
             var remoteTemp = $"/tmp/{meta.Name}-{meta.Version}-{Guid.NewGuid():N}.aspkg";
             long fileSize = new FileInfo(opts.PackagePath).Length;
-            AnsiConsole.MarkupLine($"[grey]Package size: {fileSize / 1024.0:F1} KB[/]");
+
+            WriteWithIcon(tabCount, IconType.Info, $"Package size: {ConvertBytesToHumanReadable(fileSize)}");
 
             await AnsiConsole.Progress()
                 .AutoRefresh(true)
@@ -386,7 +427,7 @@ public static class DeployCommand
                     new SpinnerColumn())
                 .StartAsync(async ctx =>
                 {
-                    var uploadTask = ctx.AddTask("[cyan]Uploading via SCP[/]", maxValue: fileSize);
+                    var uploadTask = ctx.AddTask($"{new string(' ', tabCount * 4)}   Uploading via SCP", maxValue: fileSize);
                     await Task.Run(() =>
                         session.Upload(opts.PackagePath, remoteTemp, (uploaded, total) =>
                         {
@@ -395,32 +436,32 @@ public static class DeployCommand
                     uploadTask.Value = fileSize;
                     uploadTask.StopTask();
                 });
-            Pass($"Package uploaded to {remoteTemp}");
+            Pass(tabCount, $"Package uploaded ");
 
             // ── STEP 5 — SHA-512 checksum ─────────────────────────────────────
-            BeginStep(6, "Verifying SHA-512 checksum");
+            MakeTitle("\nVerifying SHA-512 checksum");
             var (_, remoteHash, _) = session.Run($"sha512sum {remoteTemp} | awk '{{print $1}}'");
             remoteHash = remoteHash.Trim();
-            
+
             var localHash = ChecksumHelper.ComputeSha512(opts.PackagePath);
-            AnsiConsole.MarkupLine($"  [grey]Local : {(localHash.Length >= 32 ? localHash[..32] : localHash)}...[/]");
-            AnsiConsole.MarkupLine($"  [grey]Remote: {(remoteHash.Length >= 32 ? remoteHash[..32] : remoteHash)}...[/]");
+
+            string localDisplay = localHash.Length >= 32 ? localHash[..32] + "..." : localHash;
+            string remoteDisplay = remoteHash.Length >= 32 ? remoteHash[..32] + "..." : remoteHash;
 
             if (!string.Equals(localHash, remoteHash, StringComparison.OrdinalIgnoreCase))
             {
                 session.Run($"rm -f {remoteTemp}");
-                Fail($"Checksum mismatch — transfer may be corrupt.");
+                Fail($"Checksum mismatch — transfer may be corrupt.\n\n");
                 return 1;
             }
-            Pass("SHA-512 checksum verified — package integrity confirmed.");
+            Pass(tabCount, "SHA-512 checksum verified — package integrity confirmed.");
 
             // ── STEP 6 — Rollback snapshot + service registration ─────────────
-            BeginStep(7, "Creating rollback snapshot and service registration");
+            MakeTitle("\nCreating rollback snapshot and service registration");
 
             var (_, remoteHome, _) = session.Run("echo $HOME");
             remoteHome = remoteHome.Trim();
             if (string.IsNullOrWhiteSpace(remoteHome)) remoteHome = $"/home/{opts.SshUser}";
-            AnsiConsole.MarkupLine($"[grey]Remote home: {remoteHome}[/]");
 
             var installBase = $"{remoteHome}/bangkasvcs";
             var installPath = $"{installBase}/{meta.Name}";
@@ -449,7 +490,7 @@ public static class DeployCommand
 
                         if (sameVersion && sameChecksum)
                         {
-                            AnsiConsole.MarkupLine($"[yellow]Same package already deployed:[/] [white]{meta.Name}[/] v[white]{meta.Version}[/] (checksum matches).");
+                            WriteWithIcon(tabCount, IconType.Warning, $"[yellow]Same package already deployed:[/] [white]{meta.Name}[/] v[white]{meta.Version}[/] (checksum matches).");
                             var redeploy = AnsiConsole.Confirm("  Redeploy anyway?", defaultValue: false);
                             if (!redeploy)
                             {
@@ -466,13 +507,13 @@ public static class DeployCommand
                                     Result = "cancelled",
                                     Note = "Same version already deployed"
                                 });
-                                AnsiConsole.MarkupLine("[grey]  Deployment cancelled.[/]");
+                                AnsiConsole.MarkupLine("Deployment cancelled.");
                                 return 0;
                             }
                         }
                         else if (sameVersion && !sameChecksum)
                         {
-                            AnsiConsole.MarkupLine($"[yellow]Version matches but checksum differs — package was rebuilt.[/]");
+                            WriteWithIcon(tabCount, IconType.Warning, $"Version matches but checksum differs — package was rebuilt.");
                         }
                     }
                     catch { /* ignore parse errors on remote meta */ }
@@ -485,17 +526,17 @@ public static class DeployCommand
                 var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
                 var snap = $"{rollbackDir}/{stamp}";
                 session.RunPrivileged($"cp -a {installPath} {snap}");
-                AnsiConsole.MarkupLine($"[grey]Rollback snapshot created: {snap}[/]");
+                WriteWithIcon(tabCount, IconType.Info, $"Rollback snapshot created: [bold]{snap}[/]");
             }
 
             session.RunPrivileged($"mkdir -p {installPath}");
 
             var (svcExists, _, _) = session.Run($"test -f {serviceFile} && echo 'exists'");
             if (svcExists != 0)
-                AnsiConsole.MarkupLine($"[grey]No existing service unit — creating {serviceFile}[/]");
+                WriteWithIcon(tabCount, IconType.Info, $"No existing service unit — creating {serviceFile}");
             else
             {
-                AnsiConsole.MarkupLine("  [grey]Existing service unit found — will overwrite.[/]");
+                WriteWithIcon(tabCount, IconType.Info, $"Existing service unit found — will overwrite.");
                 session.RunPrivileged($"systemctl stop {meta.Name} 2>/dev/null || true");
             }
 
@@ -506,10 +547,10 @@ public static class DeployCommand
 
             svcConfig.WorkingDirectory = installPath;
             svcConfig.ExecStart = $"{dotnetExe} {installPath}/{meta.EntryDll}";
-            AnsiConsole.MarkupLine($"[grey]ExecStart: {svcConfig.ExecStart}[/]");
+            WriteWithIcon(tabCount, IconType.Info, $"ExecStart: {svcConfig.ExecStart}");
 
             if (!string.IsNullOrWhiteSpace(svcConfig.EnvironmentFile))
-                AnsiConsole.MarkupLine($"[grey]EnvironmentFile: {svcConfig.EnvironmentFile}[/]");
+                WriteWithIcon(tabCount, IconType.Info, $"EnvironmentFile: {svcConfig.EnvironmentFile}");
 
             var localUnitTmp = Path.GetTempFileName();
             try
@@ -525,10 +566,10 @@ public static class DeployCommand
             }
             session.RunPrivileged($"chmod 644 {serviceFile}");
             session.RunPrivileged("systemctl daemon-reload");
-            Pass("Rollback snapshot created and systemd unit registered.");
+            Pass(tabCount, "Rollback snapshot created and systemd unit registered.");
 
             // ── STEP 7 — Cloudflare prerequisites ────────────────────────────
-            BeginStep(8, "Checking Cloudflare Tunnel prerequisites");
+            MakeTitle("\nChecking Cloudflare Tunnel prerequisites");
             if (meta.HasCloudflare && cfConfig != null)
             {
                 var (cfInstalled, _, _) = session.Run("which cloudflared");
@@ -545,16 +586,16 @@ public static class DeployCommand
                     Fail("cloudflared service is not active on the remote host. Start it first.");
                     return 1;
                 }
-                Pass("cloudflared is installed and running.");
+                Pass(tabCount, "cloudflared is installed and running.");
             }
             else
             {
-                AnsiConsole.MarkupLine("  [grey]No Cloudflare config in package — skipping.[/]");
-                Pass("Cloudflare check skipped (not configured).");
+                WriteWithIcon(tabCount, IconType.Info, "No Cloudflare config in package — skipping...");
+                Pass(tabCount, "Cloudflare check skipped (not configured).");
             }
 
             // ── STEP 8 — Extract + install files ─────────────────────────────
-            BeginStep(9, $"Installing to {installPath}");
+            MakeTitle($"\nInstalling to {installPath}");
 
             var remoteExtract = $"/tmp/bangka-extract-{Guid.NewGuid():N}";
             session.Run($"mkdir -p {remoteExtract}");
@@ -590,9 +631,8 @@ public static class DeployCommand
             var (dllCode, dllOut, _) = session.Run(
                 $"test -f {installPath}/{meta.EntryDll} && echo 'found' || echo 'MISSING'");
             var dllStatus = dllOut.Trim();
-            AnsiConsole.MarkupLine(
-                $"  [grey]Entry DLL ({Markup.Escape(meta.EntryDll)}): " +
-                $"{(dllStatus == "found" ? "[green]found[/]" : "[red]MISSING[/]")}[/]");
+            WriteWithIcon(tabCount, IconType.Info, $"Entry DLL ({Markup.Escape(meta.EntryDll)}): " +
+                $"{(dllStatus == "found" ? "[green]found[/]" : "[red]MISSING[/]")}");
 
             if (dllStatus != "found")
             {
@@ -626,7 +666,7 @@ public static class DeployCommand
                         session.Run(
                             $"sed -i '/  - service: http_status:404/i {cfConfig.ToIngressRule().Replace("/", @"\/")}' {cfMainConfig} 2>/dev/null " +
                             $"|| printf '\n{cfConfig.ToIngressRule()}\n' >> {cfMainConfig}");
-                        AnsiConsole.MarkupLine($"[grey]Cloudflare: ingress rule for {cfConfig.Hostname} appended to {cfMainConfig}[/]");
+                        WriteWithIcon(tabCount, IconType.Info, $"Cloudflare: ingress rule for {cfConfig.Hostname} appended to {cfMainConfig}");
                     }
                 }
                 else
@@ -634,12 +674,12 @@ public static class DeployCommand
                     // No global config — write a per-service config file
                     var cfYaml = EscapeForShell(cfConfig.ToConfigYaml());
                     session.Run($"printf '%s' {cfYaml} > {cfCfgPath}");
-                    AnsiConsole.MarkupLine($"[grey]Cloudflare: new config written to {cfCfgPath}[/]");
+                    WriteWithIcon(tabCount, IconType.Info, $"Cloudflare: new config written to {cfCfgPath}");
                 }
 
                 // Reload cloudflared to pick up the change
                 session.Run("systemctl reload cloudflared 2>/dev/null || systemctl restart cloudflared 2>/dev/null || true");
-                AnsiConsole.MarkupLine("  [grey]Cloudflare: cloudflared reloaded.[/]");
+                WriteWithIcon(tabCount, IconType.Info, "Cloudflare: cloudflared reloaded.");
             }
 
             session.RunPrivileged($"chown -R {svcConfig.User}:{svcConfig.User} {installPath}");
@@ -663,10 +703,10 @@ public static class DeployCommand
             }
 
             session.Run($"rm -rf {remoteExtract} {remoteTemp}");
-            Pass($"Files installed to {installPath}.");
+            Pass(tabCount, $"Files installed to {installPath}.");
 
             // ── STEP 9 — Start service and health check ───────────────────────
-            BeginStep(10, "Starting service and verifying health");
+            MakeTitle("\nStarting service and verifying health");
 
             session.RunPrivileged($"systemctl enable {meta.Name}");
             session.RunPrivileged($"systemctl start {meta.Name}");
@@ -678,7 +718,7 @@ public static class DeployCommand
             {
                 var (_, activeOut, _) = session.Run($"systemctl is-active {meta.Name}");
                 var status = activeOut.Trim();
-                AnsiConsole.MarkupLine($"[grey]Attempt {attempt}/{maxAttempts} — status: {status}[/]");
+                WriteWithIcon(tabCount, attempt > 1 ? IconType.Warning : IconType.Info, $"Attempt {attempt}/{maxAttempts} — status: {status}");
                 if (status == "active")
                 {
                     healthy = true;
@@ -692,23 +732,23 @@ public static class DeployCommand
 
             if (!healthy)
             {
-                AnsiConsole.MarkupLine("\n[red]Service failed to start — gathering diagnostics...[/]\n");
+                WriteWithIcon(tabCount, IconType.Error, "Service failed to start — gathering diagnostics...");
 
                 // ── systemctl status (human-friendly summary) ─────────────────
                 var (_, statusOut, _) = session.Run($"systemctl status {meta.Name} --no-pager -l");
                 AnsiConsole.Write(new Rule("[red]systemctl status[/]").RuleStyle("red"));
-                AnsiConsole.MarkupLine($"[grey]{Markup.Escape(statusOut)}[/]");
+                AnsiConsole.MarkupLine($"{Markup.Escape(statusOut)}");
 
                 // ── journal lines (configurable via --err-lines) ──────────────
                 var (_, journalOut, _) = session.RunPrivileged(
                     $"journalctl -u {meta.Name} --no-pager -n {opts.ErrLines} --output short-precise");
                 AnsiConsole.Write(new Rule($"[red]Journal (last {opts.ErrLines} lines)[/]").RuleStyle("red"));
-                AnsiConsole.MarkupLine($"[grey]{Markup.Escape(journalOut)}[/]");
+                AnsiConsole.MarkupLine($"{Markup.Escape(journalOut)}");
 
                 // ── unit file (so user can see exactly what was written) ───────
                 var (_, unitOut, _) = session.Run($"cat {serviceFile}");
                 AnsiConsole.Write(new Rule("[red]Unit file[/]").RuleStyle("red"));
-                AnsiConsole.MarkupLine($"[grey]{Markup.Escape(unitOut)}[/]");
+                AnsiConsole.MarkupLine($"{Markup.Escape(unitOut)}");
 
                 // ── EnvironmentFile hint if set but missing ───────────────────
                 if (!string.IsNullOrWhiteSpace(svcConfig.EnvironmentFile))
@@ -728,7 +768,7 @@ public static class DeployCommand
                 }
 
                 AnsiConsole.WriteLine();
-                AnsiConsole.MarkupLine("[yellow]Initiating rollback...[/]");
+                WriteWithIcon(tabCount, IconType.Warning, "Initiating rollback...");
                 await RollbackAsync(session, meta.Name, installPath, rollbackDir, serviceFile);
                 AuditLog.Record(new AuditRecord
                 {
@@ -747,7 +787,7 @@ public static class DeployCommand
                 return 1;
             }
 
-            Pass("Service is active and healthy.");
+            Pass(tabCount, "Service is active and healthy.");
         }
 
         AuditLog.Record(new AuditRecord
@@ -778,7 +818,7 @@ public static class DeployCommand
         SshSession session, string serviceName,
         string installPath, string rollbackDir, string serviceFile)
     {
-        AnsiConsole.MarkupLine("[yellow]Rolling back...[/]");
+        WriteWithIcon(0, IconType.Warning, "Rolling back...");
         session.RunPrivileged($"systemctl stop {serviceName} 2>/dev/null || true");
         session.RunPrivileged($"systemctl disable {serviceName} 2>/dev/null || true");
 
@@ -789,14 +829,14 @@ public static class DeployCommand
             session.Run($"rm -rf {installPath}");
             session.Run($"cp -a {rollbackDir}/{latestSnap} {installPath}");
             session.RunPrivileged($"systemctl start {serviceName} 2>/dev/null || true");
-            AnsiConsole.MarkupLine($"Restored snapshot: {latestSnap}");
+            WriteWithIcon(0, IconType.Info, $"Restored snapshot: {latestSnap}");
         }
         else
         {
             session.Run($"rm -rf {installPath}");
             session.Run($"rm -f {serviceFile}");
             session.RunPrivileged("systemctl daemon-reload");
-            AnsiConsole.MarkupLine("No prior snapshot — installation fully removed.");
+            WriteWithIcon(0, IconType.Info, "No prior snapshot — installation fully removed.");
         }
     }
 
@@ -806,12 +846,59 @@ public static class DeployCommand
         return $"\"$(echo {b64} | base64 -d)\"";
     }
 
-    private static void BeginStep(int n, string description) =>
-        AnsiConsole.MarkupLine($"[bold cyan]Step {n}[/] [white]{description}[/]");
+    private enum IconType
+    {
+        Verbose,
+        Success,
+        Info,
+        Warning,
+        Error,
+    }
 
-    private static void Pass(string msg) =>
-        AnsiConsole.MarkupLine($"[bold green][[✓]][/] {Markup.Escape(msg)}\n");
+    private static void WriteWithIcon(int tabCount, IconType type, string message)
+    {
+        string icon = type switch
+        {
+            IconType.Verbose => "[bold grey][[·]][/]",
+            IconType.Success => "[bold green][[✓]][/]",
+            IconType.Warning => "[bold yellow][[!]][/]",
+            IconType.Error => "[bold red][[X]][/]",
+            IconType.Info => "[bold blue][[i]][/]",
+            _ => "   "
+        };
+        TabWrite(tabCount, $"{icon} {message}");
+    }
 
-    private static void Fail(string msg) =>
-        AnsiConsole.MarkupLine($"[bold red][[X]][/] {Markup.Escape(msg)}\n");
+    private static void TabWrite(int tabCount, string value)
+    {
+        var tabs = new string(' ', tabCount * 4);
+        AnsiConsole.MarkupLine($"{tabs}{value}");
+    }
+    private static void MakeTitle(string description) =>
+        AnsiConsole.MarkupLine($"[bold white]{description}[/]");
+
+    private static void Pass(int tabCount, string msg) =>
+        WriteWithIcon(tabCount, IconType.Success, msg);
+
+    private static void Fail(string msg)
+    {
+        AnsiConsole.WriteLine();
+        AnsiConsole.Write(new Panel($"{Markup.Escape(msg)}")
+            .BorderColor(Color.Red)
+            .Header("[bold red][[X]] ERROR [/]")
+        );
+    }
+
+    private static string ConvertBytesToHumanReadable(long bytes)
+    {
+        string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+        double len = bytes;
+        int order = 0;
+        while (len >= 1024 && order < sizes.Length - 1)
+        {
+            order++;
+            len /= 1024;
+        }
+        return $"{len:0.##} {sizes[order]}";
+    }
 }

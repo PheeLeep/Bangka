@@ -32,8 +32,6 @@ public class Arguments
         arg.AddArgument<string>(["--package"], helpMsg: "The path to the package file to deploy (e.g. MyApp-1.0.0.bkpkg)");
         arg.AddArgument<string>(["--ssh-host"], helpMsg: "The hostname or IP address of the target server");
         arg.AddArgument(["--ssh-port"], helpMsg: "The SSH port of the target server (default: 22)", defaultValue: 22);
-        arg.AddArgument<string>(["--ssh-user"], helpMsg: "The SSH user to connect as");
-        arg.AddArgument<string>(["--ssh-key"], helpMsg: "The path to the SSH private key for authentication");
         arg.AddArgument<string>(["--profile"], helpMsg: "The name of a profile to load default values from (optional)");
         arg.AddArgument<bool>(["--force"], helpMsg: "Whether to skip the trust prompt and force deployment (default: false)");
         arg.AddArgument<int>(["--err-lines"], helpMsg: "The number of journal lines to show on deployment failure (default: 30)");
@@ -151,12 +149,12 @@ public class Arguments
             if (args.SingleOrDefault(a => a.Parameters.Contains("--package")) is ArgStore<string> package) a.PackagePath = package.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--ssh-host")) is ArgStore<string> host) a.Host = host.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--ssh-port")) is ArgStore<int> port) a.SshPort = port.TypedValue;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--ssh-user")) is ArgStore<string> user) a.SshUser = user.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--ssh-key")) is ArgStore<string> keyPath) a.KeyPath = keyPath.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--profile")) is ArgStore<string> profile) a.Profile = profile.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--force")) is ArgStore<bool> force) a.Force = force.TypedValue;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--err-lines")) is ArgStore<int> errLines) a.ErrLines = errLines.TypedValue;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--pub-key")) is ArgStore<string> pubKey) a.PubKeyPath = pubKey.Value;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--ssh-key")) is ArgStore<string> sshKey) a.KeyPath = sshKey.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--no-verify")) is ArgStore<bool> noVer) a.NoVerify = noVer.TypedValue;
 
             return a;
@@ -168,8 +166,6 @@ public class Arguments
             if (string.IsNullOrWhiteSpace(PackagePath)) yield return "--package is required (or set outDir in profile)";
             if (!string.IsNullOrWhiteSpace(PackagePath) && !File.Exists(PackagePath)) yield return $"Package file not found: {PackagePath}";
             if (string.IsNullOrWhiteSpace(Host)) yield return "--ssh-host is required (or set in profile)";
-            if (string.IsNullOrWhiteSpace(SshUser)) yield return "--ssh-user is required (or set in profile)";
-            if (string.IsNullOrWhiteSpace(KeyPath)) yield return "--ssh-key is required (or set in profile)";
             if (!string.IsNullOrWhiteSpace(KeyPath) && !File.Exists(KeyPath)) yield return $"SSH key not found: {KeyPath}";
         }
     }

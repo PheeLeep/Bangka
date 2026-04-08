@@ -2,17 +2,17 @@ using System;
 using System.Security.Cryptography;
 using ArgSharp;
 using ArgSharp.Args;
+using bangka_lib;
 using Spectre.Console;
 
 namespace bangkactl.Commands;
 
 public static class DeployUserCommand
 {
-    public const string Username = "bangka-deploy";
-    private const string SudoersFile = "/etc/sudoers.d/bangka-deploy";
+    private const string SudoersFile = $"/etc/sudoers.d/{Constants.BangkaDeployUserName}";
     private const string MarkerFile = "/etc/bangka/deploy-user";
-    private const string AuthKeysDir = $"/home/{Username}/.ssh";
-    private const string AuthKeysFile = $"/home/{Username}/.ssh/authorized_keys";
+    private const string AuthKeysDir = $"/home/{Constants.BangkaDeployUserName}/.ssh";
+    private const string AuthKeysFile = $"/home/{Constants.BangkaDeployUserName}/.ssh/authorized_keys";
 
     /// <summary>
     /// The exact set of commands granted passwordless sudo.
@@ -51,7 +51,7 @@ public static class DeployUserCommand
         argInvoke.AddArgumentAction(["init"], () =>
          {
              Environment.Exit(Init(force: false));
-         }, $"Create '{Username}', generate SSH key, configure sudoers").ArgumentZeroAction = ArgSharpClass.ArgZeroAction.TreatAsSuccess;
+         }, $"Create '{Constants.BangkaDeployUserName}', generate SSH key, configure sudoers").ArgumentZeroAction = ArgSharpClass.ArgZeroAction.TreatAsSuccess;
         argInvoke.AddArgumentAction(["rotate"], () =>
          {
              Environment.Exit(Init(force: true));
@@ -74,22 +74,22 @@ public static class DeployUserCommand
         AnsiConsole.MarkupLine($"[bold cyan]{verb}[/]\n");
 
         // ── 1. Create user if it doesn't exist ───────────────────────────────
-        var (userExists, _, _) = Shell($"id {Username} 2>/dev/null");
+        var (userExists, _, _) = Shell($"id {Constants.BangkaDeployUserName} 2>/dev/null");
         if (userExists != 0)
         {
-            AnsiConsole.MarkupLine($"- Creating user {Username}...");
+            AnsiConsole.MarkupLine($"- Creating user {Constants.BangkaDeployUserName}...");
             var (createCode, _, createErr) = Shell(
-                $"useradd -m -s /bin/bash -c 'Bangka deploy user' {Username}");
+                $"useradd -m -s /bin/bash -c 'Bangka deploy user' {Constants.BangkaDeployUserName}");
             if (createCode != 0)
             {
                 AnsiConsole.MarkupLine($"[white on red][[!]]:[/] [bold white]Failed to create user:[/] {createErr}");
                 return 1;
             }
-            AnsiConsole.MarkupLine($"[green]User [white]{Username}[/] created.[/]");
+            AnsiConsole.MarkupLine($"[green]User [white]{Constants.BangkaDeployUserName}[/] created.[/]");
         }
         else
         {
-            AnsiConsole.MarkupLine($"[grey]User [white]{Username}[/] already exists.[/]");
+            AnsiConsole.MarkupLine($"[grey]User [white]{Constants.BangkaDeployUserName}[/] already exists.[/]");
         }
 
         // ── 2. Generate Ed25519 key pair in memory — never written to disk ───
@@ -108,7 +108,7 @@ public static class DeployUserCommand
 
         Shell($"mkdir -p {AuthKeysDir}");
         Shell($"chmod 700 {AuthKeysDir}");
-        Shell($"chown {Username}:{Username} {AuthKeysDir}");
+        Shell($"chown {Constants.BangkaDeployUserName}:{Constants.BangkaDeployUserName} {AuthKeysDir}");
 
         if (force)
         {
@@ -119,17 +119,17 @@ public static class DeployUserCommand
         {
             Shell($"touch {AuthKeysFile}");
             // Avoid duplicate entries
-            Shell($"grep -v '{Username}' {AuthKeysFile} > /tmp/ak.tmp 2>/dev/null; mv /tmp/ak.tmp {AuthKeysFile} 2>/dev/null; true");
-            Shell($"echo '{publicOpenSsh} {Username}' >> {AuthKeysFile}");
+            Shell($"grep -v '{Constants.BangkaDeployUserName}' {AuthKeysFile} > /tmp/ak.tmp 2>/dev/null; mv /tmp/ak.tmp {AuthKeysFile} 2>/dev/null; true");
+            Shell($"echo '{publicOpenSsh} {Constants.BangkaDeployUserName}' >> {AuthKeysFile}");
         }
 
         Shell($"chmod 600 {AuthKeysFile}");
-        Shell($"chown {Username}:{Username} {AuthKeysFile}");
+        Shell($"chown {Constants.BangkaDeployUserName}:{Constants.BangkaDeployUserName} {AuthKeysFile}");
 
         // ── 4. Write sudoers rule ─────────────────────────────────────────────
         AnsiConsole.MarkupLine("Writing sudoers rule...");
 
-        var sudoLine = $"{Username} ALL=(ALL) NOPASSWD: {string.Join(", ", SudoCommands)}";
+        var sudoLine = $"{Constants.BangkaDeployUserName} ALL=(ALL) NOPASSWD: {string.Join(", ", SudoCommands)}";
         var sudoContent = $"""
 # bangka deploy user — managed by bangkactl deploy-user
 # DO NOT EDIT MANUALLY — use bangkactl deploy-user to modify
@@ -155,7 +155,7 @@ public static class DeployUserCommand
 
         // ── 5. Write marker file ──────────────────────────────────────────────
         Shell("mkdir -p /etc/bangka");
-        var marker = $"username={Username}\nfingerprint={fingerprint}\ncreated={DateTime.UtcNow:O}\n";
+        var marker = $"username={Constants.BangkaDeployUserName}\nfingerprint={fingerprint}\ncreated={DateTime.UtcNow:O}\n";
         var markerB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(marker));
         Shell($"echo {markerB64} | base64 -d > {MarkerFile}");
         Shell($"chmod 600 {MarkerFile}");
@@ -169,17 +169,17 @@ public static class DeployUserCommand
         AnsiConsole.WriteLine();
 
         AnsiConsole.Write(new Panel(
-                $"[bold white]{Username}[/] is ready.\n\n" +
+                $"[bold white]{Constants.BangkaDeployUserName}[/] is ready.\n\n" +
                 $"[grey]Fingerprint:[/] [white]{fingerprint}[/]\n" +
                 $"[grey]Auth keys: [/] [white]{AuthKeysFile}[/]\n" +
                 $"[grey]Sudoers:   [/] [white]{SudoersFile}[/]\n\n" +
                 "[bold yellow]The private key above was printed once and is NOT stored on this server.[/]\n" +
                 "Copy it to your master machine:\n\n" +
                 $"  [grey]# On master:[/]\n" +
-                $"  nano ~/.ssh/bangka-{Username}\n" +
-                $"  chmod 600 ~/.ssh/bangka-{Username}\n\n" +
+                $"  nano ~/.ssh/bangka-{Constants.BangkaDeployUserName}\n" +
+                $"  chmod 600 ~/.ssh/bangka-{Constants.BangkaDeployUserName}\n\n" +
                 "Then deploy with:\n" +
-                $"  bangka deploy --user {Username} --key ~/.ssh/bangka-{Username} ...")
+                $"  bangka deploy --user {Constants.BangkaDeployUserName} --key ~/.ssh/bangka-{Constants.BangkaDeployUserName} ...")
             .Header("[bold green] Setup Complete [/]")
             .BorderColor(Color.Green));
         return 0;
@@ -196,11 +196,11 @@ public static class DeployUserCommand
             .AddColumn("[grey]Status[/]");
 
         // User exists?
-        var (userCode, _, _) = Shell($"id {Username} 2>/dev/null");
+        var (userCode, _, _) = Shell($"id {Constants.BangkaDeployUserName} 2>/dev/null");
         table.AddRow("User",
             userCode == 0
-                ? $"[green]{Username} exists[/]"
-                : $"[red]{Username} not found[/]");
+                ? $"[green]{Constants.BangkaDeployUserName} exists[/]"
+                : $"[red]{Constants.BangkaDeployUserName} not found[/]");
 
         // authorized_keys
         var (akCode, _, _) = Shell($"test -f {AuthKeysFile}");
@@ -241,7 +241,7 @@ public static class DeployUserCommand
         }
 
         // sudo test
-        var (sudoTest, _, _) = Shell($"sudo -u {Username} sudo -n systemctl --version 2>/dev/null");
+        var (sudoTest, _, _) = Shell($"sudo -u {Constants.BangkaDeployUserName} sudo -n systemctl --version 2>/dev/null");
         table.AddRow("Sudo test",
             sudoTest == 0 ? "[green]passwordless sudo works[/]" : "[yellow]cannot verify (run as root)[/]");
 
@@ -261,7 +261,7 @@ public static class DeployUserCommand
 
     private static int RemoveUser()
     {
-        AnsiConsole.MarkupLine($"[yellow]This will remove the user {Username}[/]");
+        AnsiConsole.MarkupLine($"[yellow]This will remove the user {Constants.BangkaDeployUserName}[/]");
 
         if (!AnsiConsole.Confirm("Continue?", defaultValue: false))
         {
@@ -278,11 +278,11 @@ public static class DeployUserCommand
         if (File.Exists(MarkerFile))
             File.Delete(MarkerFile);
 
-        var (delCode, _, delErr) = Shell($"userdel -r {Username} 2>&1");
+        var (delCode, _, delErr) = Shell($"userdel -r {Constants.BangkaDeployUserName} 2>&1");
         if (delCode != 0)
             AnsiConsole.MarkupLine($"[yellow]User deletion warning:[/] {delErr}");
         else
-            AnsiConsole.MarkupLine($"[green]User {Username} deleted.[/]");
+            AnsiConsole.MarkupLine($"[green]User {Constants.BangkaDeployUserName} deleted.[/]");
 
         return 0;
     }
@@ -301,7 +301,7 @@ public static class DeployUserCommand
         // to OpenSSH PEM format requires additional marshaling
         var tmpKey = $"/tmp/bangka-keygen-{Guid.NewGuid():N}";
         var (code, _, err) = Shell(
-            $"ssh-keygen -t ed25519 -N '' -C '{Username}' -f {tmpKey} 2>&1");
+            $"ssh-keygen -t ed25519 -N '' -C '{Constants.BangkaDeployUserName}' -f {tmpKey} 2>&1");
 
         if (code != 0)
             throw new InvalidOperationException($"ssh-keygen failed: {err}");
