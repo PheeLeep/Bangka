@@ -39,7 +39,7 @@ public static class DeployCommand
             {
                 profile = DeploymentProfile.Load(opts.Profile);
                 opts = profile.ApplyToDeployArgs(opts);
-                AnsiConsole.MarkupLine($"[grey]Profile loaded: {opts.Profile}[/]");
+                AnsiConsole.MarkupLine($"Profile loaded: [bold]{opts.Profile}[/]");
 
                 // Auto-resolve package path from profile outDir + name if not supplied
                 if (string.IsNullOrWhiteSpace(opts.PackagePath) && profile != null)
@@ -50,7 +50,7 @@ public static class DeployCommand
                     if (File.Exists(pkgPath))
                     {
                         opts.PackagePath = pkgPath;
-                        AnsiConsole.MarkupLine($"[grey]Package resolved from profile: {pkgPath}[/]");
+                        AnsiConsole.MarkupLine($"Package resolved from profile: [bold]{pkgPath}[/]");
                     }
                 }
             }
@@ -401,11 +401,11 @@ public static class DeployCommand
             BeginStep(6, "Verifying SHA-512 checksum");
             var (_, remoteHash, _) = session.Run($"sha512sum {remoteTemp} | awk '{{print $1}}'");
             remoteHash = remoteHash.Trim();
-
-            AnsiConsole.MarkupLine($"[grey]Expected: {meta.Checksum[..32]}...[/]");
-            AnsiConsole.MarkupLine($"[grey]Received: {(remoteHash.Length >= 32 ? remoteHash[..32] : remoteHash)}...[/]");
-
+            
             var localHash = ChecksumHelper.ComputeSha512(opts.PackagePath);
+            AnsiConsole.MarkupLine($"  [grey]Local : {(localHash.Length >= 32 ? localHash[..32] : localHash)}...[/]");
+            AnsiConsole.MarkupLine($"  [grey]Remote: {(remoteHash.Length >= 32 ? remoteHash[..32] : remoteHash)}...[/]");
+
             if (!string.Equals(localHash, remoteHash, StringComparison.OrdinalIgnoreCase))
             {
                 session.Run($"rm -f {remoteTemp}");
@@ -810,30 +810,8 @@ public static class DeployCommand
         AnsiConsole.MarkupLine($"[bold cyan]Step {n}[/] [white]{description}[/]");
 
     private static void Pass(string msg) =>
-        AnsiConsole.MarkupLine($"[bold green]✓[/] {Markup.Escape(msg)}\n");
+        AnsiConsole.MarkupLine($"[bold green][[✓]][/] {Markup.Escape(msg)}\n");
 
     private static void Fail(string msg) =>
-        AnsiConsole.MarkupLine($"[bold red]✗[/] {Markup.Escape(msg)}\n");
-
-    static void PrintUsage()
-    {
-        AnsiConsole.MarkupLine("\n[bold]Usage:[/] bangka deploy [[options]]\n");
-
-        var table = new Table()
-            .Border(TableBorder.Rounded)
-            .BorderColor(Color.Grey)
-            .AddColumn("[cyan]Flag[/]")
-            .AddColumn("[grey]Required[/]")
-            .AddColumn("[grey]Description[/]");
-
-        table.AddRow("--package", "[red]yes[/]", "Path to .aspkg file");
-        table.AddRow("--host", "[red]yes[/]", "Remote hostname or Tailscale IP");
-        table.AddRow("--user", "[red]yes[/]", "SSH username (must be root on the remote)");
-        table.AddRow("--key", "[red]yes[/]", "Path to SSH private key");
-        table.AddRow("--port", "no", "SSH port (default: 22)");
-        table.AddRow("--force", "no", "Skip fingerprint trust prompts");
-        table.AddRow("--err-lines", "no", "Journal lines shown on failure (default: 30)");
-
-        AnsiConsole.Write(table);
-    }
+        AnsiConsole.MarkupLine($"[bold red][[X]][/] {Markup.Escape(msg)}\n");
 }
