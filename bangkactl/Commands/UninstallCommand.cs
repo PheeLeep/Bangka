@@ -32,6 +32,7 @@ public static class UninstallCommand
     {
         argInvoke.AddArgument<string>(["--service-name"], isRequired: true, helpMsg: "Service name to uninstall");
         argInvoke.AddArgument<bool>(["--keep-snapshots"], helpMsg: "Keep rollback snapshots after uninstall");
+        argInvoke.AddArgument<bool>(["--keep-data"], helpMsg: "Keep the service data directory after uninstall");
     }
 
     public static int Run(ArgInvoke argInvoke)
@@ -111,7 +112,36 @@ public static class UninstallCommand
             AnsiConsole.MarkupLine("  [grey]Keeping rollback snapshots as requested.[/]");
         }
 
+        var keepData = argInvoke.GetArgStoreValues()
+                    .SingleOrDefault(a => a.Parameters.Contains("--keep-data")) as ArgStore<bool>;
+
+        // Try to find and remove data directory (unless --keep-data)
+        if (keepData?.TypedValue != true && foundBase != null)
+        {
+            // Check for a .data.env file to find the data path
+            var dataEnvPath = installPath != null ? Path.Combine(installPath, ".data.env") : null;
+            string? dataDir = null;
+
+            if (dataEnvPath != null && File.Exists(dataEnvPath))
+            {
+                var dataLine = File.ReadAllLines(dataEnvPath)
+                    .FirstOrDefault(l => l.StartsWith("DATA_PATH="));
+                dataDir = dataLine?["DATA_PATH=".Length..];
+            }
+
+            if (!string.IsNullOrWhiteSpace(dataDir) && Directory.Exists(dataDir))
+            {
+                AnsiConsole.MarkupLine($"  [grey]Removing data directory: {dataDir}[/]");
+                Shell($"rm -rf {dataDir}");
+            }
+        }
+        else if (keepData?.TypedValue == true)
+        {
+            AnsiConsole.MarkupLine("  [grey]Keeping data directory as requested (--keep-data).[/]");
+        }
+
         var cloudflaredCfg = $"/etc/cloudflared/{serviceName}.yml";
+
         if (File.Exists(cloudflaredCfg))
         {
             AnsiConsole.MarkupLine("  [grey]Removing Cloudflare per-service config...[/]");

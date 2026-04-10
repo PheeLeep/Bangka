@@ -174,7 +174,8 @@ public static class BuildCommand
                        HasCloudflare = opts.HasCloudflare,
                        EntryDll = entryDll,
                        BuiltAt = DateTime.UtcNow.ToString("O"),
-                       RequiredEnvKeys = requiredEnvKeys
+                       RequiredEnvKeys = requiredEnvKeys,
+                       DataPath = opts.DataPath ?? string.Empty
                    };
                    meta.Serialize(Path.Combine(stagingDir, "metadata.xml"));
                    metaTask.Value = 100;
@@ -260,11 +261,15 @@ public static class BuildCommand
             }
 
             AnsiConsole.WriteLine();
+            var dataPathNote = string.IsNullOrWhiteSpace(opts.DataPath)
+                ? "[grey]none[/]"
+                : $"[white]{opts.DataPath}[/]";
             var panel = new Panel(
                     $"[bold white]{opts.Name}[/] v[white]{opts.Version}[/]\n" +
                     $"[grey]Path:[/]  [white]{Path.GetFullPath(finalPath)}[/]\n" +
                     $"[grey]Size:[/]  [white]{size / 1024.0:F1} KB[/]\n" +
                     $"[grey]CF  :[/]  [white]{(opts.HasCloudflare ? "yes" : "no")}[/]\n" +
+                    $"[grey]Data:[/]  {dataPathNote}\n" +
                     $"[grey]Sign:[/]  {signedNote}")
                 .Header("[bold green] Package Ready [/]")
                 .BorderColor(Color.Green);

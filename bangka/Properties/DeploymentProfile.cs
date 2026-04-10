@@ -41,6 +41,9 @@ public class DeploymentProfile
     [XmlElement("outDir")]
     public string OutDir { get; set; } = ".";
 
+    [XmlElement("dataPath")]
+    public string DataPath { get; set; } = string.Empty;
+
     // ── Deploy settings ───────────────────────────────────────────────────────
     [XmlElement("host")]
     public string Host { get; set; } = string.Empty;
@@ -143,22 +146,23 @@ public class DeploymentProfile
     /// </summary>
     public BuildArgs ApplyToBuildArgs(BuildArgs cli)
     {
-        if (string.IsNullOrWhiteSpace(cli.Name))        cli.Name        = Name;
-        if (string.IsNullOrWhiteSpace(cli.Version))     cli.Version     = Version;
-        if (string.IsNullOrWhiteSpace(cli.PublishDir))  cli.PublishDir  = PublishDir;
-        if (string.IsNullOrWhiteSpace(cli.EntryDll))    cli.EntryDll    = string.IsNullOrWhiteSpace(EntryDll) ? null : EntryDll;
-        if (cli.Port == 5000 && Port != 5000)           cli.Port        = Port;
-        if (cli.User == "www-data")                     cli.User        = User;
-        if (cli.Environment == "Production")            cli.Environment = Environment;
-        if (string.IsNullOrWhiteSpace(cli.Author))      cli.Author      = Author;
+        if (string.IsNullOrWhiteSpace(cli.Name)) cli.Name = Name;
+        if (string.IsNullOrWhiteSpace(cli.Version)) cli.Version = Version;
+        if (string.IsNullOrWhiteSpace(cli.PublishDir)) cli.PublishDir = PublishDir;
+        if (string.IsNullOrWhiteSpace(cli.EntryDll)) cli.EntryDll = string.IsNullOrWhiteSpace(EntryDll) ? null : EntryDll;
+        if (cli.Port == 5000 && Port != 5000) cli.Port = Port;
+        if (cli.User == "www-data") cli.User = User;
+        if (cli.Environment == "Production") cli.Environment = Environment;
+        if (string.IsNullOrWhiteSpace(cli.Author)) cli.Author = Author;
         if (string.IsNullOrWhiteSpace(cli.Description)) cli.Description = Description;
-        if (string.IsNullOrWhiteSpace(cli.EnvFile))     cli.EnvFile     = string.IsNullOrWhiteSpace(EnvFile) ? null : EnvFile;
-        if (cli.OutDir == ".")                          cli.OutDir      = OutDir;
+        if (string.IsNullOrWhiteSpace(cli.EnvFile)) cli.EnvFile = string.IsNullOrWhiteSpace(EnvFile) ? null : EnvFile;
+        if (cli.OutDir == ".") cli.OutDir = OutDir;
+        if (string.IsNullOrWhiteSpace(cli.DataPath)) cli.DataPath = string.IsNullOrWhiteSpace(DataPath) ? null : DataPath;
 
         // Cloudflare
-        if (string.IsNullOrWhiteSpace(cli.CfTunnelId))    cli.CfTunnelId    = string.IsNullOrWhiteSpace(CfTunnelId)    ? null : CfTunnelId;
-        if (string.IsNullOrWhiteSpace(cli.CfTunnelName))  cli.CfTunnelName  = string.IsNullOrWhiteSpace(CfTunnelName)  ? null : CfTunnelName;
-        if (string.IsNullOrWhiteSpace(cli.CfHostname))    cli.CfHostname    = string.IsNullOrWhiteSpace(CfHostname)    ? null : CfHostname;
+        if (string.IsNullOrWhiteSpace(cli.CfTunnelId)) cli.CfTunnelId = string.IsNullOrWhiteSpace(CfTunnelId) ? null : CfTunnelId;
+        if (string.IsNullOrWhiteSpace(cli.CfTunnelName)) cli.CfTunnelName = string.IsNullOrWhiteSpace(CfTunnelName) ? null : CfTunnelName;
+        if (string.IsNullOrWhiteSpace(cli.CfHostname)) cli.CfHostname = string.IsNullOrWhiteSpace(CfHostname) ? null : CfHostname;
         if (string.IsNullOrWhiteSpace(cli.CfCredentials)) cli.CfCredentials = string.IsNullOrWhiteSpace(CfCredentials) ? null : CfCredentials;
 
         return cli;
@@ -169,10 +173,10 @@ public class DeploymentProfile
     /// </summary>
     public DeployArgs ApplyToDeployArgs(DeployArgs cli)
     {
-        if (string.IsNullOrWhiteSpace(cli.Host))    cli.Host    = Host;
+        if (string.IsNullOrWhiteSpace(cli.Host)) cli.Host = Host;
         if (string.IsNullOrWhiteSpace(cli.SshUser)) cli.SshUser = SshUser;
         if (string.IsNullOrWhiteSpace(cli.KeyPath)) cli.KeyPath = KeyPath;
-        if (cli.SshPort == 22 && SshPort != 22)     cli.SshPort = SshPort;
+        if (cli.SshPort == 22 && SshPort != 22) cli.SshPort = SshPort;
         return cli;
     }
 }

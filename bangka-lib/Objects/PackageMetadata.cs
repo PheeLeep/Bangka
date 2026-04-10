@@ -39,13 +39,17 @@ public class PackageMetadata
     [XmlElement("entryDll")]
     public string EntryDll { get; set; } = string.Empty;
 
-    /// <summary>
-    /// Keys present in the env file at build time (not values — just key names).
-    /// Used at deploy time to verify the remote env file has all required keys.
-    /// </summary>
     [XmlArray("requiredEnvKeys")]
     [XmlArrayItem("key")]
     public List<string> RequiredEnvKeys { get; set; } = new();
+
+    /// <summary>
+    /// Relative or absolute path for persistent user-generated data.
+    /// If relative, resolved against the install base at deploy time.
+    /// Empty means no managed data directory.
+    /// </summary>
+    [XmlElement("dataPath")]
+    public string DataPath { get; set; } = string.Empty;
 
     public static PackageMetadata Deserialize(string xmlPath)
     {

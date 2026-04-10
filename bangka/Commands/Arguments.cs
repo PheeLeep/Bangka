@@ -25,6 +25,7 @@ public class Arguments
         arg.AddArgument<bool>(["--sign"], helpMsg: "Whether to sign the package (default: false)");
         arg.AddArgument<string>(["--signing-key"], helpMsg: "Path to the signing key (required if --sign is true)");
         arg.AddArgument<string>(["--out"], helpMsg: "The output directory for the generated package (default: current directory)");
+        arg.AddArgument<string>(["--data-path"], helpMsg: "Persistent data directory for the service (relative to install base or absolute). Injected as DATA_PATH env var at deploy time.");
     }
 
     public static void LoadDeployArgs(ArgInvoke arg)
@@ -71,6 +72,7 @@ public class Arguments
         // EnvironmentFile path on the remote (optional)
         public string? EnvFile { get; set; }
 
+        public string? DataPath { get; set; }
         // Package signing
         public bool Sign { get; set; } = false;
         public string? SigningKeyPath { get; set; }
@@ -101,6 +103,10 @@ public class Arguments
             if (args.SingleOrDefault(a => a.Parameters.Contains("--out")) is ArgStore<string> outDir
                 && !string.IsNullOrWhiteSpace(outDir.Value))
                 a.OutDir = outDir.Value;
+
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--data-path")) is ArgStore<string> dataPath
+                && !string.IsNullOrWhiteSpace(dataPath.Value))
+                a.DataPath = dataPath.Value;
             if (a.Sign && string.IsNullOrWhiteSpace(a.SigningKeyPath))
                 throw new ArgumentException("Signing key path must be provided when --sign is true");
 

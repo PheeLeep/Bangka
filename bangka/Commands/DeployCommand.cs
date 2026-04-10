@@ -153,6 +153,7 @@ public static class DeployCommand
         }
 
         Pass(tabCount, "SSH connection established.");
+        string dataPath = string.Empty;
         using (session)
         {
             var pubKey = SshSession.GetPublicKey(sshKey);
@@ -467,6 +468,9 @@ public static class DeployCommand
             var installPath = $"{installBase}/{meta.Name}";
             var serviceFile = $"/etc/systemd/system/{meta.Name}.service";
             var rollbackDir = $"{installBase}/.rollback/{meta.Name}";
+            dataPath = !string.IsNullOrWhiteSpace(meta.DataPath)
+                   ? (Path.IsPathRooted(meta.DataPath) ? meta.DataPath : $"{installBase}/{meta.DataPath}")
+                   : $"{installBase}/.data/{meta.Name}";
 
             session.RunPrivileged($"mkdir -p {rollbackDir}");
 
@@ -682,12 +686,62 @@ public static class DeployCommand
                 WriteWithIcon(tabCount, IconType.Info, "Cloudflare: cloudflared reloaded.");
             }
 
-            session.RunPrivileged($"chown -R {svcConfig.User}:{svcConfig.User} {installPath}");
-            session.RunPrivileged($"chmod -R o+rX {installPath}");
-            session.RunPrivileged($"chmod +x {installPath}/{meta.Name} 2>/dev/null || true");
+            // ── Data directory setup ──────────────────────────────────────────
+            session.RunPrivileged($"mkdir -p {dataPath}");
+            session.RunPrivileged($"chown -R {svcConfig.User}:{svcConfig.User} {dataPath}");
+            session.RunPrivileged($"chmod 750 {dataPath}");
+            WriteWithIcon(tabCount, IconType.Info, $"Data directory ready: [bold]{dataPath}[/]");
 
-            // Persist metadata to install dir for future same-version checks
-            // Persist metadata to install dir for future same-version checks
+            // Inject DATA_PATH into the env file if one is configured,
+            // otherwise fall back to the systemd unit Environment= line.
+            // Env file entries take precedence over inline Environment= in systemd,
+            // so we must write into the env file to avoid being overridden.
+            if (!string.IsNullOrWhiteSpace(svcConfig.EnvironmentFile))
+            {
+                // Ensure the env file exists with secure permissions:
+                // root:bangka-deploy 640 — root owns/writes, deploy user can read, others cannot
+                var envFileDir = svcConfig.EnvironmentFile.Contains('/')
+                    ? svcConfig.EnvironmentFile[..svcConfig.EnvironmentFile.LastIndexOf('/')]
+                    : ".";
+                session.RunPrivileged($"mkdir -p {envFileDir}");
+                session.RunPrivileged($"touch {svcConfig.EnvironmentFile}");
+                session.RunPrivileged($"chown root:{Constants.BangkaDeployUserName} {svcConfig.EnvironmentFile}");
+                session.RunPrivileged($"chmod 640 {svcConfig.EnvironmentFile}");
+
+                // Write DATA_PATH to a temp file, then append via tee (avoids shell redirection privilege issues)
+                var tmpEnvLine = $"/tmp/bangka-datapath-{Guid.NewGuid():N}.tmp";
+                var localEnvLineTmp = Path.GetTempFileName();
+                try
+                {
+                    File.WriteAllText(localEnvLineTmp, $"DATA_PATH={dataPath}\n");
+                    session.Upload(localEnvLineTmp, tmpEnvLine);
+                }
+                finally
+                {
+                    File.Delete(localEnvLineTmp);
+                }
+                var tmpRewrite = $"/tmp/bangka-envrewrite-{Guid.NewGuid():N}.tmp";
+                session.Run($"grep -v '^DATA_PATH=' {svcConfig.EnvironmentFile} | sudo tee {tmpRewrite} > /dev/null");
+                session.Run($"cat {tmpEnvLine} | sudo tee -a {tmpRewrite} > /dev/null");
+                session.RunPrivilegedOrThrow($"mv {tmpRewrite} {svcConfig.EnvironmentFile}");
+                session.Run($"rm -f {tmpEnvLine}");
+
+                WriteWithIcon(tabCount, IconType.Info, $"DATA_PATH injected into env file: [bold]{svcConfig.EnvironmentFile}[/]");
+                var (_, verifyOut, _) = session.Run($"grep '^DATA_PATH=' {svcConfig.EnvironmentFile}");
+                if (!verifyOut.Contains("DATA_PATH="))
+                    WriteWithIcon(tabCount, IconType.Error, $"DATA_PATH not found in env file after write — manual check required: {svcConfig.EnvironmentFile}");
+                else
+                    WriteWithIcon(tabCount, IconType.Verbose, $"Verified: {verifyOut.Trim()}");
+            }
+            else
+            {
+                // No env file — unit Environment= line is safe since nothing overrides it
+                session.RunPrivileged(
+                    $"sed -i '/^Environment=DATA_PATH=/d' {serviceFile} " +
+                    $"&& sed -i '/^\\[Service\\]/a Environment=DATA_PATH={dataPath}' {serviceFile}");
+                WriteWithIcon(tabCount, IconType.Info, "DATA_PATH injected into systemd unit.");
+            }
+            session.RunPrivileged("systemctl daemon-reload");
             var metaXml = $"""<?xml version="1.0"?><metadata><n>{meta.Name}</n><version>{meta.Version}</version><checksum>{meta.Checksum}</checksum><builtAt>{meta.BuiltAt}</builtAt><entryDll>{meta.EntryDll}</entryDll></metadata>""";
             var localMetaTmp = Path.GetTempFileName();
             try
@@ -805,7 +859,8 @@ public static class DeployCommand
 
         AnsiConsole.WriteLine();
         AnsiConsole.Write(new Panel(
-                $"[bold green]✓[/] [bold white]{meta.Name}[/] v[white]{meta.Version}[/] deployed successfully to [white]{opts.Host}[/]")
+                $"[bold green]✓[/] [bold white]{meta.Name}[/] v[white]{meta.Version}[/] deployed successfully to [white]{opts.Host}[/]\n" +
+                $"[grey]Data:[/]  [white]{dataPath}[/]")
             .Header("[bold green] Deployment Complete [/]")
             .BorderColor(Color.Green));
 
