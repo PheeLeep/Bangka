@@ -33,7 +33,7 @@ public static class LogsCommand
 
             if (follower != null && follower.TypedValue)
             {
-                AnsiConsole.MarkupLine("[grey]Following journal output. Press Ctrl+C to stop.[/]\n");
+                AnsiConsole.MarkupLine("Following journal output. Press Ctrl+C to stop.\n");
 
                 // Stream follow mode — hand off to journalctl process directly
                 var proc = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
@@ -81,7 +81,7 @@ public static class LogsCommand
                 }
 
                 AnsiConsole.Write(new Rule().RuleStyle("grey"));
-                AnsiConsole.MarkupLine($"[grey]Showing last {lines?.TypedValue} lines. Use --follow / -f to stream live output.[/]");
+                AnsiConsole.MarkupLine($"Showing last {lines?.TypedValue} lines. Use --follow / -f to stream live output.");
             }
 
         }
