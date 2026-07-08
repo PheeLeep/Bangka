@@ -12,7 +12,15 @@ public class Program
     {
         ArgSharpClass.Init("bangka",
                             "Bangka Web Deployment",
-                            "A web service deployment orchestrator for ASP.NET");
+                            "A web service deployment orchestrator for ASP.NET",
+                            epilog:
+                            "bangka is now the single tool — bangkactl has been retired and its commands\n" +
+                            "run over SSH from here:\n" +
+                            "  bangkactl deploy-user init   ->  bangka server init\n" +
+                            "  bangkactl list / status      ->  bangka list / status\n" +
+                            "  bangkactl logs / rollback    ->  bangka logs / rollback\n" +
+                            "  bangkactl uninstall / trust  ->  bangka uninstall / trust\n\n" +
+                            "First-time setup of a host:  bangka server init --ssh-host <host> --ssh-user <admin>");
         ArgSharpClass.IgnoreConflictArgument = true;
 
         ArgInvoke? profileInvoke = null;
@@ -69,9 +77,55 @@ public class Program
 
         DeployCommand.Load(deployInvoke!);
 
+        // ── Remote control commands (formerly bangkactl, now over SSH) ──────
+        ArgInvoke? listInvoke = null, statusInvoke = null, logsInvoke = null,
+                   rollbackInvoke = null, uninstallInvoke = null;
+
+        listInvoke = ArgSharpClass.AddArgumentAction(["list"],
+            () => Environment.Exit(Guard(() => ListCommand.Run(listInvoke!))),
+            "List services managed by Bangka on a remote host");
+        ListCommand.Load(listInvoke);
+        listInvoke.ArgumentZeroAction = ArgSharpClass.ArgZeroAction.TreatAsSuccess;
+
+        statusInvoke = ArgSharpClass.AddArgumentAction(["status"],
+            () => Environment.Exit(Guard(() => StatusCommand.Run(statusInvoke!))),
+            "Show health status of a deployed service");
+        StatusCommand.Load(statusInvoke);
+
+        logsInvoke = ArgSharpClass.AddArgumentAction(["logs"],
+            () => Environment.Exit(Guard(() => LogsCommand.Run(logsInvoke!))),
+            "Tail the systemd journal for a remote service");
+        LogsCommand.Load(logsInvoke);
+
+        rollbackInvoke = ArgSharpClass.AddArgumentAction(["rollback"],
+            () => Environment.Exit(Guard(() => RollbackCommand.Run(rollbackInvoke!))),
+            "Roll a service back to a previous snapshot");
+        RollbackCommand.Load(rollbackInvoke);
+
+        uninstallInvoke = ArgSharpClass.AddArgumentAction(["uninstall"],
+            () => Environment.Exit(Guard(() => UninstallCommand.Run(uninstallInvoke!))),
+            "Uninstall a deployed service from a remote host");
+        UninstallCommand.Load(uninstallInvoke);
+
+        TrustCommand.Load(ArgSharpClass.AddArgumentAction(["trust"], null,
+            "Manage server-side signature enforcement"));
+        ServerCommand.Load(ArgSharpClass.AddArgumentAction(["server"], null,
+            "Provision and manage a remote host (create deploy user, sudoers, keys)"));
+
         if (!ArgSharpClass.Parse(args))
         {
             return;
+        }
+    }
+
+    /// <summary>Runs a command body, converting exceptions into a clean error + exit code.</summary>
+    static int Guard(Func<int> body)
+    {
+        try { return body(); }
+        catch (Exception ex)
+        {
+            AnsiConsole.MarkupLine($"[red]Error:[/] {Markup.Escape(ex.Message)}");
+            return 1;
         }
     }
 

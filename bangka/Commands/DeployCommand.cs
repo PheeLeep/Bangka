@@ -45,7 +45,7 @@ public static class DeployCommand
                 if (string.IsNullOrWhiteSpace(opts.PackagePath) && profile != null)
                 {
                     var pkgDir = string.IsNullOrWhiteSpace(profile.OutDir) ? "." : profile.OutDir;
-                    var pkgName = $"{profile.Name}-{profile.Version}.aspkg";
+                    var pkgName = $"{profile.Name}-{profile.Version}.bangka";
                     var pkgPath = Path.Combine(pkgDir, pkgName);
                     if (File.Exists(pkgPath))
                     {
@@ -90,6 +90,15 @@ public static class DeployCommand
         {
             if (Directory.Exists(extractDir))
                 Directory.Delete(extractDir, recursive: true);
+        }
+
+        // The package name becomes the systemd unit name and is interpolated into
+        // many remote commands — reject anything that isn't a safe unit name.
+        try { ShellUtil.ValidateServiceName(meta.Name); }
+        catch (ArgumentException ex)
+        {
+            AnsiConsole.MarkupLine($"[red]{Markup.Escape(ex.Message)}[/]");
+            return 1;
         }
 
         // Signature verification is handled in Step 2.5 after SSH connection,
@@ -214,12 +223,14 @@ public static class DeployCommand
             // ── STEP 2.5 — Query client trust enforcement ────────────────────
             MakeTitle("\nChecking server trust enforcement");
 
+            bool serverTrustActive = false;
             var trustPubPath = "/etc/bangka/trusted.pub";
             var (trustExists, _, _) = session.Run($"test -f {trustPubPath} && echo yes");
 
             if (trustExists == 0)
             {
                 // Server has a trust key — package MUST be signed and verifiable
+                serverTrustActive = true;
                 WriteWithIcon(tabCount, IconType.Info, "Server trust enforcement is [green]ACTIVE.[/]");
 
                 var (_, serverPubPem, _) = session.Run($"cat {trustPubPath}");
@@ -451,11 +462,48 @@ public static class DeployCommand
 
             if (!string.Equals(localHash, remoteHash, StringComparison.OrdinalIgnoreCase))
             {
-                session.Run($"rm -f {remoteTemp}");
+                session.Run($"rm -f {ShellUtil.Quote(remoteTemp)}");
                 Fail($"Checksum mismatch — transfer may be corrupt.\n\n");
                 return 1;
             }
             Pass(tabCount, "SHA-512 checksum verified — package integrity confirmed.");
+
+            // ── STEP 5.5 — Server-side signature verification ─────────────────
+            // When the server enforces trust, verify the signature ON THE SERVER
+            // with openssl against /etc/bangka/trusted.pub, so a tampered client
+            // cannot bypass the check. The local check in Step 2.5 already passed.
+            if (serverTrustActive)
+            {
+                MakeTitle("\nVerifying signature on server");
+                var (opensslCode, _, _) = session.Run("which openssl");
+                if (opensslCode != 0)
+                {
+                    WriteWithIcon(tabCount, IconType.Warning,
+                        "openssl not found on server — relying on local signature check only.");
+                }
+                else
+                {
+                    var sigDoc = System.Text.Json.JsonSerializer.Deserialize<SignatureDocument>(
+                        File.ReadAllText(opts.PackagePath + ".sig"))!;
+                    var derBytes = Convert.FromBase64String(sigDoc.Signature);
+                    var remoteSig = $"/tmp/bangka-sig-{Guid.NewGuid():N}.der";
+                    session.UploadBytes(derBytes, remoteSig);
+
+                    var (vfyCode, vfyOut, _) = session.Run(
+                        $"openssl dgst -sha512 -verify {trustPubPath} " +
+                        $"-signature {ShellUtil.Quote(remoteSig)} {ShellUtil.Quote(remoteTemp)}");
+                    session.Run($"rm -f {ShellUtil.Quote(remoteSig)}");
+
+                    if (vfyCode != 0 || !vfyOut.Contains("Verified OK"))
+                    {
+                        session.Run($"rm -f {ShellUtil.Quote(remoteTemp)}");
+                        Fail("Server-side signature verification failed.\n" +
+                             "The uploaded package does not verify against the server's trusted.pub.");
+                        return 1;
+                    }
+                    Pass(tabCount, "Server-side signature verified with openssl.");
+                }
+            }
 
             // ── STEP 6 — Rollback snapshot + service registration ─────────────
             MakeTitle("\nCreating rollback snapshot and service registration");
@@ -524,13 +572,20 @@ public static class DeployCommand
                 }
             }
 
-            var (existCode, _, _) = session.Run($"test -d {installPath} && echo 'exists'");
+            var (existCode, _, _) = session.Run($"test -d {ShellUtil.Quote(installPath)} && echo 'exists'");
             if (existCode == 0)
             {
-                var stamp = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss");
+                var stamp = DateTime.UtcNow.ToString(Constants.SnapshotStampFormat);
                 var snap = $"{rollbackDir}/{stamp}";
-                session.RunPrivileged($"cp -a {installPath} {snap}");
-                WriteWithIcon(tabCount, IconType.Info, $"Rollback snapshot created: [bold]{snap}[/]");
+                var (snapCode, _, snapErr) = session.RunPrivileged(
+                    $"cp -a {ShellUtil.Quote(installPath)} {ShellUtil.Quote(snap)}");
+                if (snapCode != 0)
+                    WriteWithIcon(tabCount, IconType.Warning, $"Snapshot creation failed: {Markup.Escape(snapErr)}");
+                else
+                    WriteWithIcon(tabCount, IconType.Info, $"Rollback snapshot created: [bold]{snap}[/]");
+
+                // Enforce retention so snapshots don't grow without bound.
+                PruneSnapshots(session, rollbackDir, opts.MaxSnapshots);
             }
 
             session.RunPrivileged($"mkdir -p {installPath}");
@@ -627,9 +682,26 @@ public static class DeployCommand
                 return 1;
             }
 
-            session.RunPrivilegedOrThrow($"rm -rf {installPath}");
-            session.RunPrivilegedOrThrow($"mkdir -p {installPath}");
-            session.RunPrivilegedOrThrow($"cp -r {remoteExtract}/data/. {installPath}/");
+            // Atomic-ish install swap: move the current install aside, copy the new
+            // files in, and only remove the previous copy on success. If the copy
+            // fails, restore the previous install so we never leave a half-written dir.
+            var prevPath = $"{installPath}.prev";
+            session.RunPrivileged($"rm -rf {ShellUtil.Quote(prevPath)}");
+            session.RunPrivileged($"test -d {ShellUtil.Quote(installPath)} && mv {ShellUtil.Quote(installPath)} {ShellUtil.Quote(prevPath)} || true");
+            session.RunPrivilegedOrThrow($"mkdir -p {ShellUtil.Quote(installPath)}");
+            var (cpCode, _, cpErr) = session.RunPrivileged(
+                $"cp -r {ShellUtil.Quote(remoteExtract + "/data/.")} {ShellUtil.Quote(installPath + "/")}");
+            if (cpCode != 0)
+            {
+                // Restore the previous install directory.
+                session.RunPrivileged($"rm -rf {ShellUtil.Quote(installPath)}");
+                session.RunPrivileged($"test -d {ShellUtil.Quote(prevPath)} && mv {ShellUtil.Quote(prevPath)} {ShellUtil.Quote(installPath)} || true");
+                session.Run($"rm -rf {ShellUtil.Quote(remoteExtract)} {ShellUtil.Quote(remoteTemp)}");
+                await RollbackAsync(session, meta.Name, installPath, rollbackDir, serviceFile);
+                Fail($"Failed to copy files into install directory: {Markup.Escape(cpErr)}");
+                return 1;
+            }
+            session.RunPrivileged($"rm -rf {ShellUtil.Quote(prevPath)}");
 
             // Verify entry DLL landed
             var (dllCode, dllOut, _) = session.Run(
@@ -742,14 +814,15 @@ public static class DeployCommand
                 WriteWithIcon(tabCount, IconType.Info, "DATA_PATH injected into systemd unit.");
             }
             session.RunPrivileged("systemctl daemon-reload");
-            var metaXml = $"""<?xml version="1.0"?><metadata><n>{meta.Name}</n><version>{meta.Version}</version><checksum>{meta.Checksum}</checksum><builtAt>{meta.BuiltAt}</builtAt><entryDll>{meta.EntryDll}</entryDll></metadata>""";
             var localMetaTmp = Path.GetTempFileName();
             try
             {
-                File.WriteAllText(localMetaTmp, metaXml);
+                // Serialize the full metadata (correct <name> tag, unlike the old
+                // hand-built XML that wrote <n>) so the same-version guard can read it back.
+                meta.Serialize(localMetaTmp);
                 var remoteMetaTmp = $"/tmp/{meta.Name}-meta-{Guid.NewGuid():N}.xml";
                 session.Upload(localMetaTmp, remoteMetaTmp);
-                session.RunPrivilegedOrThrow($"mv {remoteMetaTmp} {installPath}/.bangka-meta.xml");
+                session.RunPrivilegedOrThrow($"mv {ShellUtil.Quote(remoteMetaTmp)} {ShellUtil.Quote($"{installPath}/.bangka-meta.xml")}");
             }
             finally
             {
@@ -869,30 +942,54 @@ public static class DeployCommand
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
-    private static async Task RollbackAsync(
+    private static Task RollbackAsync(
         SshSession session, string serviceName,
         string installPath, string rollbackDir, string serviceFile)
     {
         WriteWithIcon(0, IconType.Warning, "Rolling back...");
-        session.RunPrivileged($"systemctl stop {serviceName} 2>/dev/null || true");
-        session.RunPrivileged($"systemctl disable {serviceName} 2>/dev/null || true");
+        session.RunPrivileged($"systemctl stop {ShellUtil.Quote(serviceName)} 2>/dev/null || true");
+        session.RunPrivileged($"systemctl disable {ShellUtil.Quote(serviceName)} 2>/dev/null || true");
 
-        var (_, snapList, _) = session.Run($"ls -1t {rollbackDir} 2>/dev/null | head -1");
+        // Pick the newest snapshot BY NAME — the yyyyMMdd-HHmmss stamp sorts
+        // chronologically. Do NOT use `ls -t`: cp -a preserves source mtimes,
+        // so mtime order is meaningless and would restore the wrong snapshot.
+        var (_, snapList, _) = session.Run(
+            $"ls -1 {ShellUtil.Quote(rollbackDir)} 2>/dev/null | sort -r | head -1");
         var latestSnap = snapList.Trim();
         if (!string.IsNullOrEmpty(latestSnap))
         {
-            session.Run($"rm -rf {installPath}");
-            session.Run($"cp -a {rollbackDir}/{latestSnap} {installPath}");
-            session.RunPrivileged($"systemctl start {serviceName} 2>/dev/null || true");
+            var snapPath = $"{rollbackDir}/{latestSnap}";
+            session.RunPrivileged($"rm -rf {ShellUtil.Quote(installPath)}");
+            var (cpCode, _, cpErr) = session.RunPrivileged(
+                $"cp -a {ShellUtil.Quote(snapPath)} {ShellUtil.Quote(installPath)}");
+            if (cpCode != 0)
+                WriteWithIcon(0, IconType.Error, $"Snapshot restore copy failed: {Markup.Escape(cpErr)}");
+            session.RunPrivileged($"systemctl start {ShellUtil.Quote(serviceName)} 2>/dev/null || true");
             WriteWithIcon(0, IconType.Info, $"Restored snapshot: {latestSnap}");
         }
         else
         {
-            session.Run($"rm -rf {installPath}");
-            session.Run($"rm -f {serviceFile}");
+            session.RunPrivileged($"rm -rf {ShellUtil.Quote(installPath)}");
+            session.RunPrivileged($"rm -f {ShellUtil.Quote(serviceFile)}");
             session.RunPrivileged("systemctl daemon-reload");
             WriteWithIcon(0, IconType.Info, "No prior snapshot — installation fully removed.");
         }
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Keeps only the newest <paramref name="max"/> snapshots (by name) for a service.</summary>
+    private static void PruneSnapshots(SshSession session, string rollbackDir, int max)
+    {
+        if (max < 1) max = 1;
+        // List oldest-first, drop the newest `max`, remove the rest.
+        var (_, list, _) = session.Run($"ls -1 {ShellUtil.Quote(rollbackDir)} 2>/dev/null | sort");
+        var snaps = list.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                        .Select(s => s.Trim())
+                        .Where(s => s.Length > 0)
+                        .ToList();
+        if (snaps.Count <= max) return;
+        foreach (var old in snaps.Take(snaps.Count - max))
+            session.RunPrivileged($"rm -rf {ShellUtil.Quote($"{rollbackDir}/{old}")}");
     }
 
     private static string EscapeForShell(string content)

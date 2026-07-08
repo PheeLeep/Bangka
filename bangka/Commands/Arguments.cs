@@ -10,7 +10,7 @@ public class Arguments
         arg.AddArgument<string>(["--name"], helpMsg: "The name of the build");
         arg.AddArgument<string>(["--version"], helpMsg: "The version of the build");
         arg.AddArgument<string>(["--publish"], helpMsg: "The path to the published output directory (e.g. bin/Release/net8.0/publish)");
-        arg.AddArgument<int>(["--port"], helpMsg: "The port the service listens on (default: 5000)");
+        arg.AddArgument(["--port"], helpMsg: "The port the service listens on (default: 5000)", defaultValue: 5000);
         arg.AddArgument<string>(["--env"], helpMsg: "The ASPNETCORE_ENVIRONMENT value to set on the service (default: Production)");
         arg.AddArgument<string>(["--author"], helpMsg: "The author of the service (optional)");
         arg.AddArgument<string>(["--user"], helpMsg: "The user to run the service as (optional)");
@@ -28,16 +28,32 @@ public class Arguments
         arg.AddArgument<string>(["--data-path"], helpMsg: "Persistent data directory for the service (relative to install base or absolute). Injected as DATA_PATH env var at deploy time.");
     }
 
-    public static void LoadDeployArgs(ArgInvoke arg)
+    /// <summary>Declares the SSH connection flags shared by all remote control
+    /// commands (list, status, logs, rollback, uninstall, trust). These are the
+    /// subset of deploy args that <see cref="DeployArgs.Parse"/> reads for connecting.</summary>
+    public static void LoadConnectionArgs(ArgInvoke arg)
     {
-        arg.AddArgument<string>(["--package"], helpMsg: "The path to the package file to deploy (e.g. MyApp-1.0.0.bkpkg)");
         arg.AddArgument<string>(["--ssh-host"], helpMsg: "The hostname or IP address of the target server");
         arg.AddArgument(["--ssh-port"], helpMsg: "The SSH port of the target server (default: 22)", defaultValue: 22);
+        arg.AddArgument<string>(["--ssh-key"], helpMsg: "Path to the SSH private key (default: ~/.ssh/bangka-deploy)");
+        arg.AddArgument<string>(["--ssh-user"], helpMsg: "SSH user to connect as (default: bangka-deploy)");
+        arg.AddArgument<string>(["--profile"], helpMsg: "Load host/port/key/user from a saved profile (optional)");
+        arg.AddArgument<bool>(["--force"], helpMsg: "Skip the host-fingerprint trust prompt (default: false)");
+    }
+
+    public static void LoadDeployArgs(ArgInvoke arg)
+    {
+        arg.AddArgument<string>(["--package"], helpMsg: "The path to the package file to deploy (e.g. MyApp-1.0.0.bangka)");
+        arg.AddArgument<string>(["--ssh-host"], helpMsg: "The hostname or IP address of the target server");
+        arg.AddArgument(["--ssh-port"], helpMsg: "The SSH port of the target server (default: 22)", defaultValue: 22);
+        arg.AddArgument<string>(["--ssh-key"], helpMsg: "Path to the SSH private key (default: ~/.ssh/bangka-deploy)");
+        arg.AddArgument<string>(["--ssh-user"], helpMsg: "SSH user to connect as (default: bangka-deploy)");
         arg.AddArgument<string>(["--profile"], helpMsg: "The name of a profile to load default values from (optional)");
         arg.AddArgument<bool>(["--force"], helpMsg: "Whether to skip the trust prompt and force deployment (default: false)");
         arg.AddArgument<int>(["--err-lines"], helpMsg: "The number of journal lines to show on deployment failure (default: 30)");
         arg.AddArgument<string>(["--pub-key"], helpMsg: "The path to a public key to use for signature verification (optional, overrides default public key)");
         arg.AddArgument<bool>(["--no-verify"], helpMsg: "Whether to skip signature verification (not recommended)");
+        arg.AddArgument(["--max-snapshots"], helpMsg: $"Max rollback snapshots to retain per service (default: {bangka_lib.Constants.DefaultMaxSnapshots})", defaultValue: bangka_lib.Constants.DefaultMaxSnapshots);
     }
     // ── Build Arguments ──────────────────────────────────────────────────────────
 
@@ -83,14 +99,17 @@ public class Arguments
             var a = new BuildArgs();
 
 
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--name")) is ArgStore<string> namePf) a.Name = namePf.Value;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--version")) is ArgStore<string> verPf) a.Version = verPf.Value;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--publish")) is ArgStore<string> publishPf) a.PublishDir = publishPf.Value;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--port")) is ArgStore<int> portPf) a.Port = portPf.TypedValue;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--env")) is ArgStore<string> envPf) a.Environment = envPf.Value;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--author")) is ArgStore<string> authorPf) a.Author = authorPf.Value;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--user")) is ArgStore<string> userPf) a.User = userPf.Value;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--description")) is ArgStore<string> descriptionPf) a.Description = descriptionPf.Value;
+            // Only assign when the flag was actually provided — an unset string arg
+            // comes back as "" and would otherwise clobber the class defaults
+            // (e.g. User="www-data", Environment="Production").
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--name")) is ArgStore<string> namePf && !string.IsNullOrWhiteSpace(namePf.Value)) a.Name = namePf.Value;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--version")) is ArgStore<string> verPf && !string.IsNullOrWhiteSpace(verPf.Value)) a.Version = verPf.Value;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--publish")) is ArgStore<string> publishPf && !string.IsNullOrWhiteSpace(publishPf.Value)) a.PublishDir = publishPf.Value;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--port")) is ArgStore<int> portPf && portPf.TypedValue != 0) a.Port = portPf.TypedValue;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--env")) is ArgStore<string> envPf && !string.IsNullOrWhiteSpace(envPf.Value)) a.Environment = envPf.Value;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--author")) is ArgStore<string> authorPf && !string.IsNullOrWhiteSpace(authorPf.Value)) a.Author = authorPf.Value;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--user")) is ArgStore<string> userPf && !string.IsNullOrWhiteSpace(userPf.Value)) a.User = userPf.Value;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--description")) is ArgStore<string> descriptionPf && !string.IsNullOrWhiteSpace(descriptionPf.Value)) a.Description = descriptionPf.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--cf-tunnel-id")) is ArgStore<string> cfTid) a.CfTunnelId = cfTid.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--cf-tunnel-name")) is ArgStore<string> cfName) a.CfTunnelName = cfName.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--cf-hostname")) is ArgStore<string> cfHostName) a.CfHostname = cfHostName.Value;
@@ -121,14 +140,15 @@ public class Arguments
             if (string.IsNullOrWhiteSpace(PublishDir)) yield return "--publish is required";
             if (!Directory.Exists(PublishDir)) yield return $"--publish directory not found: {PublishDir}";
 
-            bool cfPartial = CfTunnelId != null || CfTunnelName != null || CfHostname != null;
-            bool cfFull = CfTunnelId != null && CfTunnelName != null && CfHostname != null && CfCredentials != null;
-            if (cfPartial && !cfFull)
+            // Unset string args come back as empty (not null), so test for content.
+            bool cfPartial = !string.IsNullOrWhiteSpace(CfTunnelId) || !string.IsNullOrWhiteSpace(CfTunnelName) || !string.IsNullOrWhiteSpace(CfHostname);
+            if (cfPartial && !HasCloudflare)
                 yield return "Cloudflare flags are incomplete — provide all: --cf-tunnel-id, --cf-tunnel-name, --cf-hostname, --cf-credentials";
         }
 
         public bool HasCloudflare =>
-            CfTunnelId != null && CfTunnelName != null && CfHostname != null && CfCredentials != null;
+            !string.IsNullOrWhiteSpace(CfTunnelId) && !string.IsNullOrWhiteSpace(CfTunnelName)
+            && !string.IsNullOrWhiteSpace(CfHostname) && !string.IsNullOrWhiteSpace(CfCredentials);
     }
 
     // ── Deploy Arguments ─────────────────────────────────────────────────────────
@@ -145,6 +165,7 @@ public class Arguments
         public int ErrLines { get; set; } = 30;     // journal lines on failure
         public string? PubKeyPath { get; set; }         // override public key for verification
         public bool NoVerify { get; set; } = false;  // skip signature check (use with caution)
+        public int MaxSnapshots { get; set; } = bangka_lib.Constants.DefaultMaxSnapshots;
 
         public static DeployArgs Parse(ArgInvoke argInvoke)
         {
@@ -155,13 +176,14 @@ public class Arguments
             if (args.SingleOrDefault(a => a.Parameters.Contains("--package")) is ArgStore<string> package) a.PackagePath = package.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--ssh-host")) is ArgStore<string> host) a.Host = host.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--ssh-port")) is ArgStore<int> port) a.SshPort = port.TypedValue;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--ssh-key")) is ArgStore<string> keyPath) a.KeyPath = keyPath.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--profile")) is ArgStore<string> profile) a.Profile = profile.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--force")) is ArgStore<bool> force) a.Force = force.TypedValue;
-            if (args.SingleOrDefault(a => a.Parameters.Contains("--err-lines")) is ArgStore<int> errLines) a.ErrLines = errLines.TypedValue;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--err-lines")) is ArgStore<int> errLines && errLines.TypedValue != 0) a.ErrLines = errLines.TypedValue;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--pub-key")) is ArgStore<string> pubKey) a.PubKeyPath = pubKey.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--ssh-key")) is ArgStore<string> sshKey) a.KeyPath = sshKey.Value;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--ssh-user")) is ArgStore<string> sshUser) a.SshUser = sshUser.Value;
             if (args.SingleOrDefault(a => a.Parameters.Contains("--no-verify")) is ArgStore<bool> noVer) a.NoVerify = noVer.TypedValue;
+            if (args.SingleOrDefault(a => a.Parameters.Contains("--max-snapshots")) is ArgStore<int> maxSnap) a.MaxSnapshots = maxSnap.TypedValue;
 
             return a;
         }

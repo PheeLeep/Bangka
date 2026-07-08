@@ -58,14 +58,17 @@ public static class PackageSigner
         ecdsa.ImportECPrivateKey(PemToBytes(keyPem, "EC PRIVATE KEY"), out _);
 
         var packageBytes = File.ReadAllBytes(packagePath);
-        var signature = ecdsa.SignData(packageBytes, HashAlgorithmName.SHA512);
+        // DER (Rfc3279) format so the signature is verifiable server-side with
+        // `openssl dgst -sha512 -verify`, not only by .NET.
+        var signature = ecdsa.SignData(packageBytes, HashAlgorithmName.SHA512,
+            DSASignatureFormat.Rfc3279DerSequence);
 
         // Derive a short key ID from the public key for identification
         var keyId = ComputeKeyId(ecdsa);
 
         var sigDoc = new SignatureDocument
         {
-            Alg = "ES256-SHA512",
+            Alg = "ES256-SHA512-DER",
             KeyId = keyId,
             Signature = Convert.ToBase64String(signature),
             SignedAt = DateTime.UtcNow.ToString("O"),
@@ -125,7 +128,8 @@ public static class PackageSigner
         var packageBytes = File.ReadAllBytes(packagePath);
         var sigBytes = Convert.FromBase64String(sigDoc.Signature);
 
-        bool valid = ecdsa.VerifyData(packageBytes, sigBytes, HashAlgorithmName.SHA512);
+        bool valid = ecdsa.VerifyData(packageBytes, sigBytes, HashAlgorithmName.SHA512,
+            DSASignatureFormat.Rfc3279DerSequence);
 
         return valid
             ? (true, $"Signature valid. Signed at {DateTime.Parse(sigDoc.SignedAt)} by key {sigDoc.KeyId}")
@@ -139,6 +143,19 @@ public static class PackageSigner
         var pubBytes = ecdsa.ExportSubjectPublicKeyInfo();
         var hash = SHA256.HashData(pubBytes);
         return Convert.ToHexString(hash)[..16].ToLowerInvariant();
+    }
+
+    /// <summary>OpenSSH-style SHA256 fingerprint of a public-key PEM, used to
+    /// identify the server trust key.</summary>
+    public static string ComputeFingerprint(string publicKeyPem)
+    {
+        using var ecdsa = ECDsa.Create();
+        ecdsa.ImportSubjectPublicKeyInfo(PemToBytes(publicKeyPem, "PUBLIC KEY"), out _);
+        var pubBytes = ecdsa.ExportSubjectPublicKeyInfo();
+        var hash = SHA256.HashData(pubBytes);
+        var hex = Convert.ToHexString(hash).ToLowerInvariant();
+        return "SHA256:" + string.Join(":", Enumerable.Range(0, hex.Length / 2)
+            .Select(i => hex.Substring(i * 2, 2)));
     }
 
     private static byte[] PemToBytes(string pem, string label)

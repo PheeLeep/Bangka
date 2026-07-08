@@ -10,23 +10,59 @@ public sealed class SshSession : IDisposable
     private readonly ScpClient _scp;
     private bool _disposed;
 
-    private SshSession(SshClient ssh, ScpClient scp)
+    public string Host { get; }
+    public int Port { get; }
+
+    private SshSession(SshClient ssh, ScpClient scp, string host, int port)
     {
         _ssh = ssh;
         _scp = scp;
+        Host = host;
+        Port = port;
     }
 
     // ── Factory ───────────────────────────────────────────────────────────────
 
+    /// <summary>Connect using private-key authentication (the default for deploy and all
+    /// post-bootstrap commands, which authenticate as the bangka-deploy user).</summary>
     public static SshSession Connect(
         string host, int port, string user, string privateKeyPath,
         KnownHostsStore knownHosts, bool force = false)
     {
         var keyFile = new PrivateKeyFile(privateKeyPath);
+        return Connect(host, port, user, knownHosts, force,
+            () => new PrivateKeyAuthenticationMethod(user, keyFile));
+    }
+
+    /// <summary>Connect using password authentication. Used only by 'bangka server init'
+    /// to bootstrap a fresh host as an admin/sudo user before the deploy key exists.
+    /// Answers both the 'password' and 'keyboard-interactive' methods OpenSSH may negotiate.</summary>
+    public static SshSession ConnectPassword(
+        string host, int port, string user, string password,
+        KnownHostsStore knownHosts, bool force = false)
+    {
+        return Connect(host, port, user, knownHosts, force, () =>
+        {
+            var kbd = new KeyboardInteractiveAuthenticationMethod(user);
+            kbd.AuthenticationPrompt += (_, e) =>
+            {
+                foreach (var prompt in e.Prompts)
+                    prompt.Response = password;
+            };
+            return kbd;
+        }, () => new PasswordAuthenticationMethod(user, password));
+    }
+
+    private static SshSession Connect(
+        string host, int port, string user,
+        KnownHostsStore knownHosts, bool force,
+        params Func<AuthenticationMethod>[] authFactories)
+    {
+        // Each ConnectionInfo consumes its own auth-method instances.
         var connSsh = new ConnectionInfo(host, port, user,
-            new PrivateKeyAuthenticationMethod(user, keyFile));
+            authFactories.Select(f => f()).ToArray());
         var connScp = new ConnectionInfo(host, port, user,
-            new PrivateKeyAuthenticationMethod(user, keyFile));
+            authFactories.Select(f => f()).ToArray());
 
         var ssh = new SshClient(connSsh);
         var scp = new ScpClient(connScp);
@@ -108,7 +144,7 @@ public sealed class SshSession : IDisposable
         ssh.Connect();
         scp.Connect();
 
-        return new SshSession(ssh, scp);
+        return new SshSession(ssh, scp, host, port);
     }
 
     // ── Remote execution ──────────────────────────────────────────────────────
@@ -167,6 +203,71 @@ public sealed class SshSession : IDisposable
             _scp.Uploading += (_, e) => progress(e.Uploaded, e.Size);
 
         _scp.Upload(new FileInfo(localPath), remoteDir);
+    }
+
+    /// <summary>Writes bytes to a local temp file and uploads them to <paramref name="remotePath"/>.</summary>
+    public void UploadBytes(byte[] data, string remotePath)
+    {
+        var tmp = Path.GetTempFileName();
+        try
+        {
+            File.WriteAllBytes(tmp, data);
+            _scp.Upload(new FileInfo(tmp), remotePath);
+        }
+        finally { File.Delete(tmp); }
+    }
+
+    /// <summary>Writes UTF-8 text to a local temp file and uploads it to <paramref name="remotePath"/>.</summary>
+    public void UploadText(string text, string remotePath) =>
+        UploadBytes(System.Text.Encoding.UTF8.GetBytes(text), remotePath);
+
+    // ── Streaming execution (for `logs --follow`) ──────────────────────────────
+
+    /// <summary>Runs a long-lived command, invoking <paramref name="onData"/> as output
+    /// arrives, until the token is cancelled or the command exits.</summary>
+    public void StreamCommand(string command, Action<string> onData, CancellationToken token)
+    {
+        using var cmd = _ssh.CreateCommand(command);
+        var async = cmd.BeginExecute();
+        using var reader = new StreamReader(cmd.OutputStream);
+        try
+        {
+            while (!token.IsCancellationRequested && (!async.IsCompleted || !reader.EndOfStream))
+            {
+                var line = reader.ReadLine();
+                if (line != null) onData(line);
+                else if (async.IsCompleted) break;
+                else Thread.Sleep(100);
+            }
+        }
+        finally
+        {
+            try { cmd.CancelAsync(); } catch { }
+        }
+    }
+
+    // ── Privilege detection ────────────────────────────────────────────────────
+
+    /// <summary>Detects whether the connected user is root and sets <see cref="IsRoot"/>.
+    /// When not root, verifies passwordless sudo for systemctl is available.
+    /// Returns (isRoot, sudoOk). sudoOk is always true when root.</summary>
+    public (bool IsRoot, bool SudoOk) DetectPrivileges()
+    {
+        var (code, uid, _) = Run("id -u");
+        var root = code == 0 && uid.Trim() == "0";
+        SetIsRoot(root);
+        if (root) return (true, true);
+        var (sudoCode, _, _) = Run("sudo -n systemctl --version 2>&1");
+        return (false, sudoCode == 0);
+    }
+
+    /// <summary>Returns the remote deploy user's services base directory ($HOME/bangkasvcs).</summary>
+    public string ResolveServicesBase()
+    {
+        var (_, home, _) = Run("echo $HOME");
+        home = home.Trim();
+        if (string.IsNullOrWhiteSpace(home)) home = ".";
+        return $"{home}/bangkasvcs";
     }
 
     // ── Public key retrieval ──────────────────────────────────────────────────

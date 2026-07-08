@@ -3,8 +3,6 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "bangkactl", "bangkactl\bangkactl.csproj", "{35ED0D6C-17A2-49B6-BF16-141B78F71282}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "bangka-lib", "bangka-lib\bangka-lib.csproj", "{24895713-0235-4D98-A413-B423D5F687F7}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "bangka", "bangka\bangka.csproj", "{9EF066BF-F23E-4E63-96B3-C8C12A5F3650}"
@@ -14,14 +12,7 @@ Global
 		Debug|Any CPU = Debug|Any CPU
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
-	GlobalSection(SolutionProperties) = preSolution
-		HideSolutionNode = FALSE
-	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
-		{35ED0D6C-17A2-49B6-BF16-141B78F71282}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{35ED0D6C-17A2-49B6-BF16-141B78F71282}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{35ED0D6C-17A2-49B6-BF16-141B78F71282}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{35ED0D6C-17A2-49B6-BF16-141B78F71282}.Release|Any CPU.Build.0 = Release|Any CPU
 		{24895713-0235-4D98-A413-B423D5F687F7}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{24895713-0235-4D98-A413-B423D5F687F7}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{24895713-0235-4D98-A413-B423D5F687F7}.Release|Any CPU.ActiveCfg = Release|Any CPU
@@ -30,5 +21,8 @@ Global
 		{9EF066BF-F23E-4E63-96B3-C8C12A5F3650}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9EF066BF-F23E-4E63-96B3-C8C12A5F3650}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9EF066BF-F23E-4E63-96B3-C8C12A5F3650}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
 	EndGlobalSection
 EndGlobal
