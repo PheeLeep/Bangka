@@ -138,29 +138,22 @@ public static class BuildCommand
                    var metaTask = ctx.AddTask("[cyan]Writing metadata.xml[/]");
                    var installPath = $"/home/{opts.User}/bangkasvcs/{opts.Name}";
 
-                   // Extract env keys from local env file if provided
+                   // Record the KEY NAMES (not values) from a local .env so deploy can
+                   // warn if a required key is missing. Values/secrets are never packaged;
+                   // the .env is shipped out-of-band at deploy time. --env-file (a local
+                   // path) overrides the ./.env convention.
                    var requiredEnvKeys = new List<string>();
-                   if (!string.IsNullOrWhiteSpace(opts.EnvFile))
+                   var localEnv = !string.IsNullOrWhiteSpace(opts.EnvFile) && File.Exists(opts.EnvFile)
+                       ? opts.EnvFile
+                       : (File.Exists(".env") ? ".env" : null);
+                   if (localEnv != null)
                    {
-                       var localEnvPath = opts.EnvFile;
-                       // The EnvFile is a remote path — also check if a local copy exists
-                       // by looking for a file with the same name in the publish dir or cwd
-                       var localCopy = Path.Combine(opts.PublishDir, Path.GetFileName(localEnvPath));
-                       if (!File.Exists(localCopy)) localCopy = Path.GetFileName(localEnvPath);
-                       if (File.Exists(localCopy))
-                       {
-                           requiredEnvKeys = File.ReadAllLines(localCopy)
-                               .Where(l => !string.IsNullOrWhiteSpace(l) && !l.TrimStart().StartsWith('#') && l.Contains('='))
-                               .Select(l => l.Split('=')[0].Trim())
-                               .Where(k => !string.IsNullOrWhiteSpace(k))
-                               .ToList();
-                           AnsiConsole.MarkupLine($"Embedded {requiredEnvKeys.Count} env key(s) from local env file.[/]");
-                       }
-                       else
-                       {
-                           AnsiConsole.MarkupLine($"[yellow]No local env file found at '{localCopy}' — env key verification will be skipped at deploy time.[/]");
-                           AnsiConsole.MarkupLine($"[yellow]If this is your intention. Make sure that the specific env file exists in the server during deployment.[/]");
-                       }
+                       requiredEnvKeys = File.ReadAllLines(localEnv)
+                           .Where(l => !string.IsNullOrWhiteSpace(l) && !l.TrimStart().StartsWith('#') && l.Contains('='))
+                           .Select(l => l.Split('=')[0].Trim())
+                           .Where(k => !string.IsNullOrWhiteSpace(k))
+                           .ToList();
+                       AnsiConsole.MarkupLine($"Recorded {requiredEnvKeys.Count} env key name(s) from [bold]{localEnv}[/] (values not packaged).");
                    }
 
                    var meta = new PackageMetadata
@@ -192,7 +185,7 @@ public static class BuildCommand
                        ExecStart = string.Empty,   // filled in at deploy time
                        Environment = opts.Environment,
                        AspNetPort = opts.Port,
-                       EnvironmentFile = opts.EnvFile ?? string.Empty
+                       EnvironmentFile = string.Empty   // Bangka sets the managed path at deploy time
                    };
 
                    svc.Serialize(Path.Combine(stagingDir, "systemdservice.xml"));

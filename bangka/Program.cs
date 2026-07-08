@@ -73,7 +73,7 @@ public class Program
                                                                Environment.Exit(1);
                                                            }
                                                        },
-                                                       "Deploy a .bangka package to a remote host");
+                                                       "Deploy a .bangka package to a remote host (builds it inline if --package is omitted)");
 
         DeployCommand.Load(deployInvoke!);
 

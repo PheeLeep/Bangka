@@ -21,7 +21,7 @@ public class Arguments
         arg.AddArgument<string>(["--cf-credentials"], helpMsg: "Path to Cloudflare credentials file for Cloudflare integration (optional, but requires all CF flags if used)");
         arg.AddArgument<string>(["--profile"], helpMsg: "The name of a profile to load default values from (optional)");
         arg.AddArgument<string>(["--dll"], helpMsg: "The entry DLL to use (optional, auto-detected from publish dir if omitted)");
-        arg.AddArgument<string>(["--env-file"], helpMsg: "Path to an environment variable file on the remote server (optional)");
+        arg.AddArgument<string>(["--env-file"], helpMsg: "Path to a LOCAL .env file with secrets (default: ./.env). Shipped out-of-band at deploy; never packaged.");
         arg.AddArgument<bool>(["--sign"], helpMsg: "Whether to sign the package (default: false)");
         arg.AddArgument<string>(["--signing-key"], helpMsg: "Path to the signing key (required if --sign is true)");
         arg.AddArgument<string>(["--out"], helpMsg: "The output directory for the generated package (default: current directory)");

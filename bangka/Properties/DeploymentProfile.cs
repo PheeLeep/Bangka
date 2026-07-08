@@ -35,6 +35,9 @@ public class DeploymentProfile
     [XmlElement("description")]
     public string Description { get; set; } = string.Empty;
 
+    // Deprecated: env files are now local and shipped out-of-band by deploy
+    // (default ./.env, or --env-file <local path>). Kept for back-compat; if set,
+    // it is treated as a LOCAL path. Prefer EnvVars for profile-stored values.
     [XmlElement("envFile")]
     public string EnvFile { get; set; } = string.Empty;
 

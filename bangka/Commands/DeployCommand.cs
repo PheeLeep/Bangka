@@ -15,6 +15,11 @@ public static class DeployCommand
     public static void Load(ArgInvoke invoke)
     {
         LoadDeployArgs(invoke);
+        // Also accept build inputs so `deploy` can build the package inline when
+        // --package is omitted (ArgSharp.IgnoreConflictArgument tolerates the
+        // --profile/--out flags shared with the deploy arg set).
+        LoadBuildArgs(invoke);
+        invoke.AddArgument<bool>(["--rebuild"], helpMsg: "Rebuild the package before deploying even if it already exists");
     }
     public static int Run(ArgInvoke invoke)
     {
@@ -61,6 +66,49 @@ public static class DeployCommand
             }
         }
 
+        // ── Build the package inline when one wasn't supplied (or --rebuild) ──
+        var rebuild = (invoke.GetArgStoreValues()
+            .SingleOrDefault(a => a.Parameters.Contains("--rebuild")) as ArgStore<bool>)?.TypedValue == true;
+        if (string.IsNullOrWhiteSpace(opts.PackagePath) || rebuild)
+        {
+            BuildArgs? bopts = null;
+            try
+            {
+                bopts = BuildArgs.Parse(invoke);
+                if (profile != null) bopts = profile.ApplyToBuildArgs(bopts);
+            }
+            catch (ArgumentException) { /* e.g. --sign without key; BuildCommand.Run will report */ }
+
+            bool canBuild = bopts != null
+                && !string.IsNullOrWhiteSpace(bopts.Name)
+                && !string.IsNullOrWhiteSpace(bopts.Version)
+                && !string.IsNullOrWhiteSpace(bopts.PublishDir);
+
+            if (rebuild && !canBuild)
+            {
+                AnsiConsole.MarkupLine("[red]--rebuild requires build inputs (--publish/--name/--version, or a profile).[/]");
+                return 1;
+            }
+
+            if (canBuild)
+            {
+                var outDir = string.IsNullOrWhiteSpace(bopts!.OutDir) ? "." : bopts.OutDir;
+                var expectedPkg = Path.Combine(outDir, $"{bopts.Name}-{bopts.Version}.bangka");
+                if (rebuild || !File.Exists(expectedPkg))
+                {
+                    AnsiConsole.MarkupLine("[grey]No package supplied — building inline...[/]\n");
+                    var rc = BuildCommand.Run(invoke);
+                    if (rc != 0) return rc;
+                    AnsiConsole.WriteLine();
+                }
+                else
+                {
+                    AnsiConsole.MarkupLine($"[grey]Reusing existing package: [white]{expectedPkg}[/] (use --rebuild to force).[/]");
+                }
+                opts.PackagePath = expectedPkg;
+            }
+        }
+
         var errors = opts.Validate().ToList();
         if (errors.Count > 0)
         {
@@ -69,6 +117,11 @@ public static class DeployCommand
                 AnsiConsole.MarkupLine($"[red]•[/] {e}");
             return 1;
         }
+
+        // Resolve the local .env (secrets) to ship out-of-band, if any.
+        var localEnvPath = ResolveLocalEnvFile(invoke);
+        if (localEnvPath != null)
+            AnsiConsole.MarkupLine($"Environment file: [bold]{localEnvPath}[/] [grey](shipped out-of-band, not packaged)[/]");
 
         // ── Extract metadata from the package before connecting ───────────────
         PackageMetadata meta;
@@ -179,20 +232,9 @@ public static class DeployCommand
             }
             Pass(tabCount, "SSH key was registered.");
 
-            // ── Env file push (if profile has envVars defined) ────────────────
-            if (profile != null && profile.EnvVars.Count > 0 &&
-                !string.IsNullOrWhiteSpace(profile.EnvFile))
-            {
-                WriteWithIcon(tabCount, IconType.Verbose, $"Pushing {profile.EnvVars.Count} env var(s) to {profile.EnvFile}...");
-                var envContent = profile.ToEnvFileContent();
-                var envB64 = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(envContent));
-                var envDir = Path.GetDirectoryName(profile.EnvFile)!;
-
-                session.Run($"mkdir -p {envDir}");
-                session.RunOrThrow($"echo {envB64} | base64 -d > {profile.EnvFile}");
-                session.Run($"chmod 600 {profile.EnvFile}");
-                WriteWithIcon(tabCount, IconType.Info, $"Env file written to {profile.EnvFile}");
-            }
+            // Env vars (profile envVars + local .env) are written to a Bangka-managed
+            // env file later in this deploy — see the "environment file" step. Nothing
+            // to push here.
 
             // ── STEP 2 — Privilege check ──────────────────────────────────────
             MakeTitle("\nVerifying remote privileges");
@@ -353,65 +395,9 @@ public static class DeployCommand
                 WriteWithIcon(tabCount, IconType.Success, "systemctl: [bold]present[/]");
             }
 
-            // EnvironmentFile existence check (if package requires one)
-            if (!string.IsNullOrWhiteSpace(svcConfig.EnvironmentFile))
-            {
-                var (envFileCode, _, _) = session.Run($"test -f {svcConfig.EnvironmentFile} && echo yes");
-                if (envFileCode != 0)
-                {
-                    WriteWithIcon(tabCount, IconType.Error, $"EnvironmentFile '{svcConfig.EnvironmentFile}' does not exist on remote.");
-                    WriteWithIcon(tabCount, IconType.Verbose, "Service may fail to start. Create it before deploying.");
-                }
-                else
-                {
-                    WriteWithIcon(tabCount, IconType.Info, $"EnvironmentFile: [bold]{Markup.Escape(svcConfig.EnvironmentFile)}[/] (found)");
-                }
-            }
-
-            // ── Env file key diff check ──────────────────────────────────────
-            if (meta.RequiredEnvKeys.Count > 0 && !string.IsNullOrWhiteSpace(svcConfig.EnvironmentFile))
-            {
-                var (envExists2, _, _) = session.Run($"test -f {svcConfig.EnvironmentFile} && echo yes");
-                if (envExists2 == 0)
-                {
-                    var (_, remoteEnvContent, _) = session.Run($"cat {svcConfig.EnvironmentFile}");
-                    var remoteKeys = remoteEnvContent
-                        .Split('\n', StringSplitOptions.RemoveEmptyEntries)
-                        .Where(l => !l.TrimStart().StartsWith('#') && l.Contains('='))
-                        .Select(l => l.Split('=')[0].Trim())
-                        .Where(k => !string.IsNullOrWhiteSpace(k))
-                        .ToHashSet();
-
-                    var missingKeys = meta.RequiredEnvKeys.Where(k => !remoteKeys.Contains(k)).ToList();
-                    var extraKeys = remoteKeys.Where(k => !meta.RequiredEnvKeys.Contains(k)).ToList();
-
-                    if (missingKeys.Count > 0 || extraKeys.Count > 0)
-                    {
-                        WriteWithIcon(tabCount, IconType.Warning, "Environment file key mismatch detected:");
-
-                        if (missingKeys.Count > 0)
-                        {
-                            WriteWithIcon(tabCount, IconType.Warning, "Missing on remote (required by package):");
-                            foreach (var k in missingKeys)
-                                AnsiConsole.MarkupLine($"    [red]- {Markup.Escape(k)}[/]");
-                        }
-
-                        if (extraKeys.Count > 0)
-                        {
-                            WriteWithIcon(tabCount, IconType.Warning, "Extra on remote (not in package):");
-                            foreach (var k in extraKeys)
-                                AnsiConsole.MarkupLine($"    [yellow]+ {Markup.Escape(k)}[/]");
-                        }
-
-                        WriteWithIcon(tabCount, IconType.Verbose, "Aborting — update the remote env file to match the required keys and retry.");
-                        prereqFailed = true;
-                    }
-                    else
-                    {
-                        WriteWithIcon(tabCount, IconType.Info, $"Env file keys: all {meta.RequiredEnvKeys.Count} required key(s) present.");
-                    }
-                }
-            }
+            // The environment file is now written by Bangka from the local .env
+            // (see the "environment file" step below), so there's no remote file to
+            // pre-check here. Missing required keys are surfaced there as a warning.
 
             if (prereqFailed)
             {
@@ -520,7 +506,12 @@ public static class DeployCommand
                    ? (Path.IsPathRooted(meta.DataPath) ? meta.DataPath : $"{installBase}/{meta.DataPath}")
                    : $"{installBase}/.data/{meta.Name}";
 
-            session.RunPrivileged($"mkdir -p {rollbackDir}");
+            // Bangka owns the environment file: written from the local .env at deploy
+            // time (never bundled in the package), and wired into the unit here.
+            var envFilePath = $"{installBase}/.env/{meta.Name}.env";
+            svcConfig.EnvironmentFile = envFilePath;
+
+            session.RunPrivileged($"mkdir -p {ShellUtil.Quote(rollbackDir)}");
 
             // ── Same-version / same-checksum guard ────────────────────────────
             var remoteMetaPath = $"{installPath}/.bangka-meta.xml";
@@ -759,60 +750,58 @@ public static class DeployCommand
             }
 
             // ── Data directory setup ──────────────────────────────────────────
-            session.RunPrivileged($"mkdir -p {dataPath}");
-            session.RunPrivileged($"chown -R {svcConfig.User}:{svcConfig.User} {dataPath}");
-            session.RunPrivileged($"chmod 750 {dataPath}");
+            session.RunPrivileged($"mkdir -p {ShellUtil.Quote(dataPath)}");
+            session.RunPrivileged($"chown -R {ShellUtil.Quote($"{svcConfig.User}:{svcConfig.User}")} {ShellUtil.Quote(dataPath)}");
+            session.RunPrivileged($"chmod 750 {ShellUtil.Quote(dataPath)}");
             WriteWithIcon(tabCount, IconType.Info, $"Data directory ready: [bold]{dataPath}[/]");
 
-            // Inject DATA_PATH into the env file if one is configured,
-            // otherwise fall back to the systemd unit Environment= line.
-            // Env file entries take precedence over inline Environment= in systemd,
-            // so we must write into the env file to avoid being overridden.
-            if (!string.IsNullOrWhiteSpace(svcConfig.EnvironmentFile))
+            // ── Environment file (secrets) ────────────────────────────────────
+            // Merge order: profile envVars, then local .env (wins on conflict),
+            // then DATA_PATH (always set by Bangka). Written out-of-band to a
+            // root:root 0600 managed file — never bundled in the package. systemd
+            // (root) reads it and injects the vars into the service process.
+            var envMap = new List<KeyValuePair<string, string>>();
+            var envIndex = new Dictionary<string, int>(StringComparer.Ordinal);
+            void SetEnv(string k, string v)
             {
-                // Ensure the env file exists with secure permissions:
-                // root:bangka-deploy 640 — root owns/writes, deploy user can read, others cannot
-                var envFileDir = svcConfig.EnvironmentFile.Contains('/')
-                    ? svcConfig.EnvironmentFile[..svcConfig.EnvironmentFile.LastIndexOf('/')]
-                    : ".";
-                session.RunPrivileged($"mkdir -p {envFileDir}");
-                session.RunPrivileged($"touch {svcConfig.EnvironmentFile}");
-                session.RunPrivileged($"chown root:{Constants.BangkaDeployUserName} {svcConfig.EnvironmentFile}");
-                session.RunPrivileged($"chmod 640 {svcConfig.EnvironmentFile}");
-
-                // Write DATA_PATH to a temp file, then append via tee (avoids shell redirection privilege issues)
-                var tmpEnvLine = $"/tmp/bangka-datapath-{Guid.NewGuid():N}.tmp";
-                var localEnvLineTmp = Path.GetTempFileName();
-                try
-                {
-                    File.WriteAllText(localEnvLineTmp, $"DATA_PATH={dataPath}\n");
-                    session.Upload(localEnvLineTmp, tmpEnvLine);
-                }
-                finally
-                {
-                    File.Delete(localEnvLineTmp);
-                }
-                var tmpRewrite = $"/tmp/bangka-envrewrite-{Guid.NewGuid():N}.tmp";
-                session.Run($"grep -v '^DATA_PATH=' {svcConfig.EnvironmentFile} | sudo tee {tmpRewrite} > /dev/null");
-                session.Run($"cat {tmpEnvLine} | sudo tee -a {tmpRewrite} > /dev/null");
-                session.RunPrivilegedOrThrow($"mv {tmpRewrite} {svcConfig.EnvironmentFile}");
-                session.Run($"rm -f {tmpEnvLine}");
-
-                WriteWithIcon(tabCount, IconType.Info, $"DATA_PATH injected into env file: [bold]{svcConfig.EnvironmentFile}[/]");
-                var (_, verifyOut, _) = session.Run($"grep '^DATA_PATH=' {svcConfig.EnvironmentFile}");
-                if (!verifyOut.Contains("DATA_PATH="))
-                    WriteWithIcon(tabCount, IconType.Error, $"DATA_PATH not found in env file after write — manual check required: {svcConfig.EnvironmentFile}");
-                else
-                    WriteWithIcon(tabCount, IconType.Verbose, $"Verified: {verifyOut.Trim()}");
+                if (envIndex.TryGetValue(k, out var idx)) envMap[idx] = new(k, v);
+                else { envIndex[k] = envMap.Count; envMap.Add(new(k, v)); }
             }
-            else
+            if (profile != null)
+                foreach (var e in profile.EnvVars) SetEnv(e.Key, e.Value);
+            if (localEnvPath != null)
             {
-                // No env file — unit Environment= line is safe since nothing overrides it
-                session.RunPrivileged(
-                    $"sed -i '/^Environment=DATA_PATH=/d' {serviceFile} " +
-                    $"&& sed -i '/^\\[Service\\]/a Environment=DATA_PATH={dataPath}' {serviceFile}");
-                WriteWithIcon(tabCount, IconType.Info, "DATA_PATH injected into systemd unit.");
+                foreach (var line in File.ReadAllLines(localEnvPath))
+                {
+                    var trimmed = line.TrimStart();
+                    if (trimmed.Length == 0 || trimmed.StartsWith('#') || !line.Contains('=')) continue;
+                    var eq = line.IndexOf('=');
+                    var k = line[..eq].Trim();
+                    if (k.Length > 0) SetEnv(k, line[(eq + 1)..]);
+                }
             }
+            SetEnv("DATA_PATH", dataPath);
+
+            if (meta.RequiredEnvKeys.Count > 0)
+            {
+                var missing = meta.RequiredEnvKeys.Where(k => !envIndex.ContainsKey(k)).ToList();
+                if (missing.Count > 0)
+                    WriteWithIcon(tabCount, IconType.Warning,
+                        $"Keys required by the package but missing from the shipped .env: {Markup.Escape(string.Join(", ", missing))}");
+            }
+
+            var envContent = "# Generated by Bangka — managed file, do not edit by hand\n"
+                + string.Join("\n", envMap.Select(kv => $"{kv.Key}={kv.Value}")) + "\n";
+            var envDir = envFilePath[..envFilePath.LastIndexOf('/')];
+            session.RunPrivilegedOrThrow($"mkdir -p {ShellUtil.Quote(envDir)}");
+            var tmpEnv = $"/tmp/bangka-env-{Guid.NewGuid():N}.tmp";
+            session.UploadText(envContent, tmpEnv);
+            session.RunPrivilegedOrThrow($"mv {ShellUtil.Quote(tmpEnv)} {ShellUtil.Quote(envFilePath)}");
+            session.RunPrivileged($"chown root:root {ShellUtil.Quote(envFilePath)}");
+            session.RunPrivileged($"chmod 600 {ShellUtil.Quote(envFilePath)}");
+            WriteWithIcon(tabCount, IconType.Info,
+                $"Environment file written: [bold]{envFilePath}[/] ({envMap.Count} var(s), 0600 root:root)");
+
             session.RunPrivileged("systemctl daemon-reload");
             var localMetaTmp = Path.GetTempFileName();
             try
@@ -990,6 +979,24 @@ public static class DeployCommand
         if (snaps.Count <= max) return;
         foreach (var old in snaps.Take(snaps.Count - max))
             session.RunPrivileged($"rm -rf {ShellUtil.Quote($"{rollbackDir}/{old}")}");
+    }
+
+    /// <summary>
+    /// Resolves the local .env file to ship out-of-band: an explicit --env-file
+    /// (now a LOCAL path) if given, otherwise ./.env by convention. Returns null
+    /// when there's no env file to ship.
+    /// </summary>
+    private static string? ResolveLocalEnvFile(ArgInvoke invoke)
+    {
+        var explicitVal = (invoke.GetArgStoreValues()
+            .SingleOrDefault(a => a.Parameters.Contains("--env-file")) as ArgStore<string>)?.Value;
+        if (!string.IsNullOrWhiteSpace(explicitVal))
+        {
+            if (File.Exists(explicitVal)) return Path.GetFullPath(explicitVal);
+            AnsiConsole.MarkupLine($"[yellow]--env-file '{Markup.Escape(explicitVal)}' not found — skipping.[/]");
+            return null;
+        }
+        return File.Exists(".env") ? Path.GetFullPath(".env") : null;
     }
 
     private static string EscapeForShell(string content)
