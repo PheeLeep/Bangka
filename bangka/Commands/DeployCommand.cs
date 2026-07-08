@@ -69,6 +69,11 @@ public static class DeployCommand
         // ── Build the package inline when one wasn't supplied (or --rebuild) ──
         var rebuild = (invoke.GetArgStoreValues()
             .SingleOrDefault(a => a.Parameters.Contains("--rebuild")) as ArgStore<bool>)?.TypedValue == true;
+        var signRequested = (invoke.GetArgStoreValues()
+            .SingleOrDefault(a => a.Parameters.Contains("--sign")) as ArgStore<bool>)?.TypedValue == true;
+        var signingKey = (invoke.GetArgStoreValues()
+            .SingleOrDefault(a => a.Parameters.Contains("--signing-key")) as ArgStore<string>)?.Value;
+        bool builtInline = false;
         if (string.IsNullOrWhiteSpace(opts.PackagePath) || rebuild)
         {
             BuildArgs? bopts = null;
@@ -99,6 +104,7 @@ public static class DeployCommand
                     AnsiConsole.MarkupLine("[grey]No package supplied — building inline...[/]\n");
                     var rc = BuildCommand.Run(invoke);
                     if (rc != 0) return rc;
+                    builtInline = true;   // BuildCommand already signed it if --sign was set
                     AnsiConsole.WriteLine();
                 }
                 else
@@ -106,6 +112,33 @@ public static class DeployCommand
                     AnsiConsole.MarkupLine($"[grey]Reusing existing package: [white]{expectedPkg}[/] (use --rebuild to force).[/]");
                 }
                 opts.PackagePath = expectedPkg;
+            }
+        }
+
+        // ── Sign the resolved package if --sign was requested but the package
+        //    wasn't just built-and-signed inline (e.g. a profile-resolved or
+        //    explicitly-passed --package). Without this, --sign was silently ignored.
+        if (signRequested && !builtInline && !string.IsNullOrWhiteSpace(opts.PackagePath) && File.Exists(opts.PackagePath))
+        {
+            if (string.IsNullOrWhiteSpace(signingKey))
+            {
+                AnsiConsole.MarkupLine("[red]--sign requires --signing-key <path>.[/]");
+                return 1;
+            }
+            if (!File.Exists(signingKey))
+            {
+                AnsiConsole.MarkupLine($"[red]Signing key not found:[/] {Markup.Escape(signingKey)}");
+                return 1;
+            }
+            try
+            {
+                PackageSigner.SignPackage(opts.PackagePath, signingKey);
+                AnsiConsole.MarkupLine($"[green]✓[/] Package signed → {Path.GetFileName(opts.PackagePath)}.sig");
+            }
+            catch (Exception ex)
+            {
+                AnsiConsole.MarkupLine($"[red]Signing failed:[/] {Markup.Escape(ex.Message)}");
+                return 1;
             }
         }
 

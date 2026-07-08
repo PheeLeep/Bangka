@@ -53,6 +53,12 @@ public static class ProfileCommand
         deleteInvoke.AddArgument<string>(["--name"], helpMsg: "Profile name to delete", isRequired: true);
     }
 
+    /// <summary>True if <paramref name="flag"/> appears verbatim in the process argv.
+    /// Used by `profile update` to distinguish "flag omitted" from "flag set to empty",
+    /// which ArgSharp's parsed value cannot tell apart.</summary>
+    private static bool WasProvided(string flag) =>
+        Environment.GetCommandLineArgs().Any(a => a == flag);
+
     private static int CreateProfile(ArgInvoke argInvoke, bool isUpdate = false)
     {
         var build = Arguments.BuildArgs.Parse(argInvoke);
@@ -91,25 +97,27 @@ public static class ProfileCommand
         if (isUpdate)
         {
             profile = DeploymentProfile.Load(profileName);
-            // Update fields if they were provided in the arguments
-            profile.Name = string.IsNullOrWhiteSpace(build.Name) ? profile.Name : build.Name;
-            profile.Version = string.IsNullOrWhiteSpace(build.Version) ? profile.Version : build.Version;
-            profile.PublishDir = string.IsNullOrWhiteSpace(build.PublishDir) ? profile.PublishDir : build.PublishDir;
-            profile.EntryDll = string.IsNullOrWhiteSpace(build.EntryDll) ? profile.EntryDll : build.EntryDll;
-            profile.Port = build.Port != 0 ? build.Port : profile.Port;
-            profile.User = string.IsNullOrWhiteSpace(build.User) ? profile.User : build.User;
-            profile.Environment = string.IsNullOrWhiteSpace(build.Environment) ? profile.Environment : build.Environment;
-            profile.Description = string.IsNullOrWhiteSpace(build.Description) ? profile.Description : build.Description;
-            profile.EnvFile = string.IsNullOrWhiteSpace(build.EnvFile) ? profile.EnvFile : build.EnvFile;
-            profile.OutDir = string.IsNullOrWhiteSpace(build.OutDir) ? profile.OutDir : build.OutDir;
-            profile.Host = string.IsNullOrWhiteSpace(deploy.Host) ? profile.Host : deploy.Host;
-            profile.SshUser = string.IsNullOrWhiteSpace(deploy.SshUser) ? profile.SshUser : deploy.SshUser;
-            profile.KeyPath = string.IsNullOrWhiteSpace(deploy.KeyPath) ? profile.KeyPath : deploy.KeyPath;
-            profile.SshPort = deploy.SshPort != 0 ? deploy.SshPort : profile.SshPort;
-            profile.CfTunnelId = string.IsNullOrWhiteSpace(build.CfTunnelId) ? profile.CfTunnelId : build.CfTunnelId;
-            profile.CfTunnelName = string.IsNullOrWhiteSpace(build.CfTunnelName) ? profile.CfTunnelName : build.CfTunnelName;
-            profile.CfHostname = string.IsNullOrWhiteSpace(build.CfHostname) ? profile.CfHostname : build.CfHostname;
-            profile.CfCredentials = string.IsNullOrWhiteSpace(build.CfCredentials) ? profile.CfCredentials : build.CfCredentials;
+            // Only touch a field if its flag was actually passed on the command line.
+            // (ArgSharp can't distinguish "unset" from "set to empty" via the value, so
+            // we inspect argv — this is what lets `--env-file ""` CLEAR a field.)
+            if (WasProvided("--name")) profile.Name = build.Name;
+            if (WasProvided("--version")) profile.Version = build.Version;
+            if (WasProvided("--publish")) profile.PublishDir = build.PublishDir;
+            if (WasProvided("--dll")) profile.EntryDll = build.EntryDll ?? string.Empty;
+            if (WasProvided("--port")) profile.Port = build.Port;
+            if (WasProvided("--user")) profile.User = build.User;
+            if (WasProvided("--env")) profile.Environment = build.Environment;
+            if (WasProvided("--description")) profile.Description = build.Description;
+            if (WasProvided("--env-file")) profile.EnvFile = build.EnvFile ?? string.Empty;
+            if (WasProvided("--out")) profile.OutDir = build.OutDir;
+            if (WasProvided("--ssh-host")) profile.Host = deploy.Host;
+            if (WasProvided("--ssh-user")) profile.SshUser = deploy.SshUser;
+            if (WasProvided("--ssh-key")) profile.KeyPath = deploy.KeyPath;
+            if (WasProvided("--ssh-port")) profile.SshPort = deploy.SshPort;
+            if (WasProvided("--cf-tunnel-id")) profile.CfTunnelId = build.CfTunnelId ?? string.Empty;
+            if (WasProvided("--cf-tunnel-name")) profile.CfTunnelName = build.CfTunnelName ?? string.Empty;
+            if (WasProvided("--cf-hostname")) profile.CfHostname = build.CfHostname ?? string.Empty;
+            if (WasProvided("--cf-credentials")) profile.CfCredentials = build.CfCredentials ?? string.Empty;
         }
         else
         {

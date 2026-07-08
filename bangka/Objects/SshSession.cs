@@ -224,25 +224,35 @@ public sealed class SshSession : IDisposable
     // ── Streaming execution (for `logs --follow`) ──────────────────────────────
 
     /// <summary>Runs a long-lived command, invoking <paramref name="onData"/> as output
-    /// arrives, until the token is cancelled or the command exits.</summary>
+    /// arrives, until the token is cancelled or the command exits.
+    /// ReadLine() blocks on the SSH channel, so cancellation can't be observed by
+    /// polling the token — instead we register a callback that cancels the remote
+    /// command and closes the stream, which unblocks the blocked read.</summary>
     public void StreamCommand(string command, Action<string> onData, CancellationToken token)
     {
         using var cmd = _ssh.CreateCommand(command);
         var async = cmd.BeginExecute();
-        using var reader = new StreamReader(cmd.OutputStream);
+        var outputStream = cmd.OutputStream;   // available once execution has begun
+        using var reg = token.Register(() =>
+        {
+            try { cmd.CancelAsync(); } catch { }
+            try { outputStream?.Close(); } catch { }
+        });
+
+        using var reader = new StreamReader(outputStream);
         try
         {
-            while (!token.IsCancellationRequested && (!async.IsCompleted || !reader.EndOfStream))
-            {
-                var line = reader.ReadLine();
-                if (line != null) onData(line);
-                else if (async.IsCompleted) break;
-                else Thread.Sleep(100);
-            }
+            string? line;
+            while (!token.IsCancellationRequested && (line = reader.ReadLine()) != null)
+                onData(line);
+        }
+        catch (Exception) when (token.IsCancellationRequested)
+        {
+            // Expected: the stream was closed by the cancellation callback.
         }
         finally
         {
-            try { cmd.CancelAsync(); } catch { }
+            try { if (!async.IsCompleted) cmd.CancelAsync(); } catch { }
         }
     }
 
